@@ -107,11 +107,7 @@ else()
 endif()
 
 # Emscripten does not support SHARED libs
-if(NOT EMSCRIPTEN)
-  add_library(mujoco SHARED ${MUJOCO_RESOURCE_FILES})
-else()
-  add_library(mujoco STATIC ${MUJOCO_RESOURCE_FILES})
-endif()
+add_library(mujoco STATIC ${MUJOCO_RESOURCE_FILES})
 
 target_include_directories(
   mujoco
