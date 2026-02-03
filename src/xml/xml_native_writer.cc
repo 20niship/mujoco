@@ -573,7 +573,20 @@ void mjXWriter::OneCamera(XMLElement* elem, const mjCCamera* camera, mjCDef* def
   WriteAttr(elem, "ipd", 1, &camera->ipd, &def->Camera().ipd);
   WriteAttrKey(elem, "mode", camlight_map, camlight_sz, camera->mode, def->Camera().mode);
   WriteAttr(elem, "resolution", 2, camera->resolution, def->Camera().resolution);
-  WriteAttrKey(elem, "orthographic", bool_map, 2, camera->orthographic, def->Camera().orthographic);
+
+  // write output attribute if different from default
+  if (camera->output != def->Camera().output) {
+    int data[mjNCAMOUT];
+    int ndata = 0;
+    for (int i = 0; i < mjNCAMOUT; i++) {
+      if (camera->output & camout_map[i].value) {
+        data[ndata++] = camout_map[i].value;
+      }
+    }
+    WriteAttrKeys(elem, "output", camout_map, camout_sz, data, ndata, 0);
+  }
+
+  WriteAttrKey(elem, "projection", projection_map, projection_sz, camera->proj, def->Camera().proj);
 
   // camera intrinsics if specified
   if (camera->sensor_size[0] > 0 && camera->sensor_size[1] > 0) {
@@ -697,6 +710,7 @@ void mjXWriter::OneEquality(XMLElement* elem, const mjCEquality* equality, mjCDe
         break;
 
       case mjEQ_FLEX:
+      case mjEQ_FLEXVERT:
         WriteAttrTxt(elem, "flex", mjs_getString(equality->name1));
         break;
 
@@ -1585,11 +1599,23 @@ void mjXWriter::Asset(XMLElement* root) {
       WriteAttrTxt(elem, "content_type", hfield->content_type_);
       WriteAttrTxt(elem, "file", hfield->file_);
     } else {
-      WriteAttrInt(elem, "nrow", hfield->nrow);
-      WriteAttrInt(elem, "ncol", hfield->ncol);
+      int nrow = hfield->nrow;
+      int ncol = hfield->ncol;
+      WriteAttrInt(elem, "nrow", nrow);
+      WriteAttrInt(elem, "ncol", ncol);
       if (!hfield->get_userdata().empty()) {
+        // copy in reverse row order, so XML string is top-to-bottom
+        std::vector<float> flipped(nrow * ncol);
+        const std::vector<float>& userdata = hfield->get_userdata();
+        for (int i = 0; i < nrow; i++) {
+          int flip = nrow - 1 - i;
+          for (int j = 0; j < ncol; j++) {
+            flipped[i * ncol + j] = userdata[flip * ncol + j];
+          }
+        }
+
         string text;
-        Vector2String(text, hfield->get_userdata(), hfield->ncol);
+        Vector2String(text, flipped, ncol);
         WriteAttrTxt(elem, "elevation", text);
       }
     }
@@ -2016,8 +2042,23 @@ void mjXWriter::Sensor(XMLElement* root) {
         WriteAttrTxt(elem, "site", sensor->get_objname());
         break;
       case mjSENS_RANGEFINDER:
-        elem = InsertEnd(section, "rangefinder");
-        WriteAttrTxt(elem, "site", sensor->get_objname());
+        {
+          elem = InsertEnd(section, "rangefinder");
+          if (sensor->objtype == mjOBJ_SITE) {
+            WriteAttrTxt(elem, "site", sensor->get_objname());
+          } else {
+            WriteAttrTxt(elem, "camera", sensor->get_objname());
+          }
+          int dataspec = sensor->intprm[0];
+          int data[mjNRAYDATA];
+          int ndata = 0;
+          for (int i=0; i < mjNRAYDATA; i++) {
+            if (dataspec & (1 << i)) {
+              data[ndata++] = i;
+            }
+          }
+          WriteAttrKeys(elem, "data", raydata_map, mjNRAYDATA, data, ndata, 0);
+        }
         break;
       case mjSENS_CAMPROJECTION:
         elem = InsertEnd(section, "camprojection");

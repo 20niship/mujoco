@@ -109,6 +109,7 @@ def _collision_shim(
     opt__ccd_iterations: int,
     opt__ccd_tolerance: wp.array(dtype=float),
     opt__disableflags: int,
+    opt__enableflags: int,
     opt__sdf_initpoints: int,
     opt__sdf_iterations: int,
     # Data
@@ -191,6 +192,7 @@ def _collision_shim(
   _m.opt.ccd_iterations = opt__ccd_iterations
   _m.opt.ccd_tolerance = opt__ccd_tolerance
   _m.opt.disableflags = opt__disableflags
+  _m.opt.enableflags = opt__enableflags
   _m.opt.sdf_initpoints = opt__sdf_initpoints
   _m.opt.sdf_iterations = opt__sdf_iterations
   _m.pair_dim = pair_dim
@@ -342,6 +344,7 @@ def _collision_jax_impl(m: types.Model, d: types.Data):
       m.opt._impl.ccd_iterations,
       m.opt._impl.ccd_tolerance,
       m.opt.disableflags,
+      m.opt.enableflags,
       m.opt._impl.sdf_initpoints,
       m.opt._impl.sdf_iterations,
       d._impl.naconmax,

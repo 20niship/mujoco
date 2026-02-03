@@ -233,6 +233,12 @@ struct mjData_ {
   int     nparent_awake;     // number of bodies with awake parents
   int     nv_awake;          // number of awake dofs
 
+  // flags marking lazily evaluated stages
+  mjtByte flg_energypos;     // has mj_energyPos been called
+  mjtByte flg_energyvel;     // has mj_energyVel been called
+  mjtByte flg_subtreevel;    // has mj_subtreeVel been called
+  mjtByte flg_rnepost;       // has mj_rnePostConstraint been called
+
   // global properties
   mjtNum  time;              // simulation time
   mjtNum  energy[2];         // potential, kinetic energy
@@ -306,11 +312,10 @@ struct mjData_ {
   // computed by mj_fwdPosition/mj_flex
   mjtNum* flexvert_xpos;     // Cartesian flex vertex positions                  (nflexvert x 3)
   mjtNum* flexelem_aabb;     // flex element bounding boxes (center, size)       (nflexelem x 6)
-  int*    flexedge_J_rownnz; // number of non-zeros in Jacobian row              (nflexedge x 1)
-  int*    flexedge_J_rowadr; // row start address in colind array                (nflexedge x 1)
-  int*    flexedge_J_colind; // column indices in sparse Jacobian                (nflexedge x nv)
-  mjtNum* flexedge_J;        // flex edge Jacobian                               (nflexedge x nv)
+  mjtNum* flexedge_J;        // flex edge Jacobian                               (nJfe x 1)
   mjtNum* flexedge_length;   // flex edge lengths                                (nflexedge x 1)
+  mjtNum* flexvert_J;        // flex vertex Jacobian                             (nJfv x 2)
+  mjtNum* flexvert_length;   // flex vertex lengths                              (nflexvert x 2)
   mjtNum* bvh_aabb_dyn;      // global bounding box (center, size)               (nbvhdynamic x 6)
 
   // computed by mj_fwdPosition/mj_tendon

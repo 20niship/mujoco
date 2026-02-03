@@ -25,8 +25,7 @@ Add file to VFS. The directory argument is optional and can be NULL or empty. Re
 
 *Nullable:* ``directory``
 
-
-.. Assetcache:
+.. _Assetcache:
 
 The asset cache is a mechanism for caching assets (e.g. textures, meshes, etc.) to avoid repeated slow recompilation.
 The following methods provide way to control the capacity of the cache or to disable it altogether.
@@ -48,7 +47,7 @@ If compilation fails, :ref:`mj_compile` returns ``NULL``; the error can be read 
 Recompile spec to model, preserving the state. Like :ref:`mj_compile`, this function compiles an :ref:`mjSpec` to an
 :ref:`mjModel`, with two differences. First, rather than returning an entirely new model, it will
 reallocate existing :ref:`mjModel` and :ref:`mjData` instances in-place. Second, it will preserve the
-:ref:`integration state<geIntegrationState>`, as given in the provided :ref:`mjData` instance, while accounting for
+:ref:`integration state<siIntegrationState>`, as given in the provided :ref:`mjData` instance, while accounting for
 newly added or removed degrees of freedom. This allows the user to continue simulation with the same model and data
 struct pointers while editing the model programmatically.
 
@@ -170,7 +169,7 @@ This function is triggered automatically if the following sensors are present in
 It is also triggered for :ref:`user sensors<sensor-user>` of :ref:`stage<sensor-user-needstage>` "acc".
 
 The computed force arrays ``cfrc_int`` and ``cfrc_ext`` currently suffer from a know bug, they do not take into account
-the effect of spatial tendons, see :github:issue:`832`.
+the effect of spatial tendons, see :issue:`832`.
 
 .. _mj_constraintUpdate:
 
@@ -329,18 +328,18 @@ rays from a single point.
 
 .. _mj_ray:
 
-Intersect ray ``(pnt+x*vec, x >= 0)`` with visible geoms, except geoms in bodyexclude.
+Intersect ray ``pnt+x*vec, x >= 0`` with geoms.
 
-Return geomid and distance (x) to nearest surface, or -1 if no intersection.
+- Return distance ``x`` to nearest surface, or -1 if no intersection.
+- If ``geomid`` is not NULL, write the id of the intersected geom or -1 if not intersection.
+- If ``normal`` is not NULL, write the surface normal at the intersection point. The normal always points **out of the
+  geometry**, regardless of the ray's direction (i.e., including rays hitting the surface from the inside).
+- Exclude geoms in body with id ``bodyexclude``, use -1 to include all bodies.
+- ``geomgroup`` is an array of length :ref:`mjNGROUP<glNumeric>`, where 1 means the group should be included. Pass
+  NULL to skip geom group exclusion.
+- If ``flg_static`` is 0, static geoms will be excluded.
 
-geomgroup is an array of length mjNGROUP, where 1 means the group should be included. Pass geomgroup=NULL to skip
-group exclusion.
-
-If flg_static is 0, static geoms will be excluded.
-
-bodyexclude=-1 can be used to indicate that all bodies are included.
-
-*Nullable:* ``geomgroup``, ``geomid``
+*Nullable:* ``geomgroup``, ``geomid``, ``normal``
 
 .. _Interaction:
 
@@ -643,7 +642,7 @@ outputs of derivative functions are the trailing rather than leading arguments.
 
 Compute finite-differenced discrete-time transition matrices.
 
-Letting :math:`x, u` denote the current :ref:`state<gePhysicsState>` and :ref:`control<geInput>`
+Letting :math:`x, u` denote the current :ref:`state<siPhysicsState>` and :ref:`control<siInput>`
 vector in an mjData instance, and letting :math:`y, s` denote the next state and sensor
 values, the top-level :ref:`mj_step` function computes :math:`(x,u) \rightarrow (y,s)`
 :ref:`mjd_transitionFD` computes the four associated Jacobians using finite-differencing.
@@ -689,7 +688,7 @@ These matrices and their dimensions are:
 
 Finite differenced continuous-time inverse-dynamics Jacobians.
 
-Letting :math:`x, a` denote the current :ref:`state<gePhysicsState>` and acceleration vectors in an mjData instance, and
+Letting :math:`x, a` denote the current :ref:`state<siPhysicsState>` and acceleration vectors in an mjData instance, and
 letting :math:`f, s` denote the forces computed by the inverse dynamics (``qfrc_inverse``), the function
 :ref:`mj_inverse` computes :math:`(x,a) \rightarrow (f,s)`. :ref:`mjd_inverseFD` computes seven associated Jacobians
 using finite-differencing. These matrices and their dimensions are:

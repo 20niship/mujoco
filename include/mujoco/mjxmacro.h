@@ -65,8 +65,8 @@
 
 //-------------------------------- mjModel ---------------------------------------------------------
 
-// int fields of mjModel
-#define MJMODEL_INTS        \
+// size fields of mjModel
+#define MJMODEL_SIZES       \
     X( nq )                 \
     X( nv )                 \
     X( nu )                 \
@@ -96,6 +96,8 @@
     X( nflexshelldata )     \
     X( nflexevpair )        \
     X( nflextexcoord )      \
+    X( nJfe )               \
+    X( nJfv )               \
     X( nmesh )              \
     X( nmeshvert )          \
     X( nmeshnormal )        \
@@ -302,10 +304,11 @@
     X   ( mjtNum,  cam_poscom0,           ncam,          3                    ) \
     X   ( mjtNum,  cam_pos0,              ncam,          3                    ) \
     X   ( mjtNum,  cam_mat0,              ncam,          9                    ) \
-    X   ( int,     cam_orthographic,      ncam,          1                    ) \
+    X   ( int,     cam_projection,        ncam,          1                    ) \
     X   ( mjtNum,  cam_fovy,              ncam,          1                    ) \
     X   ( mjtNum,  cam_ipd,               ncam,          1                    ) \
     X   ( int,     cam_resolution,        ncam,          2                    ) \
+    X   ( int,     cam_output,            ncam,          1                    ) \
     X   ( float,   cam_sensorsize,        ncam,          2                    ) \
     X   ( float,   cam_intrinsic,         ncam,          4                    ) \
     X   ( mjtNum,  cam_user,              ncam,          MJ_M(nuser_cam)      )
@@ -369,6 +372,9 @@
     X   ( int,     flex_texcoordadr,      nflex,         1                    ) \
     X   ( int,     flex_nodebodyid,       nflexnode,     1                    ) \
     X   ( int,     flex_vertbodyid,       nflexvert,     1                    ) \
+    X   ( int,     flex_vertedgeadr,      nflexvert,     1                    ) \
+    X   ( int,     flex_vertedgenum,      nflexvert,     1                    ) \
+    X   ( int,     flex_vertedge,         nflexedge,     2                    ) \
     X   ( int,     flex_edge,             nflexedge,     2                    ) \
     X   ( int,     flex_edgeflap,         nflexedge,     2                    ) \
     X   ( int,     flex_elem,             nflexelemdata, 1                    ) \
@@ -379,23 +385,31 @@
     X   ( int,     flex_evpair,           nflexevpair,   2                    ) \
     X   ( mjtNum,  flex_vert,             nflexvert,     3                    ) \
     X   ( mjtNum,  flex_vert0,            nflexvert,     3                    ) \
+    X   ( mjtNum,  flex_vertmetric,       nflexvert,     4                    ) \
     X   ( mjtNum,  flex_node,             nflexnode,     3                    ) \
     X   ( mjtNum,  flex_node0,            nflexnode,     3                    ) \
     X   ( mjtNum,  flexedge_length0,      nflexedge,     1                    ) \
     X   ( mjtNum,  flexedge_invweight0,   nflexedge,     1                    ) \
     X   ( mjtNum,  flex_radius,           nflex,         1                    ) \
+    X   ( mjtNum,  flex_size,             nflex,         3                    ) \
     X   ( mjtNum,  flex_stiffness,        nflexelem,     21                   ) \
     X   ( mjtNum,  flex_bending,          nflexedge,     17                   ) \
     X   ( mjtNum,  flex_damping,          nflex,         1                    ) \
     X   ( mjtNum,  flex_edgestiffness,    nflex,         1                    ) \
     X   ( mjtNum,  flex_edgedamping,      nflex,         1                    ) \
-    X   ( mjtByte, flex_edgeequality,     nflex,         1                    ) \
+    X   ( int,     flex_edgeequality,     nflex,         1                    ) \
     X   ( mjtByte, flex_rigid,            nflex,         1                    ) \
     X   ( mjtByte, flexedge_rigid,        nflexedge,     1                    ) \
     X   ( mjtByte, flex_centered,         nflex,         1                    ) \
     X   ( mjtByte, flex_flatskin,         nflex,         1                    ) \
     X   ( int,     flex_bvhadr,           nflex,         1                    ) \
     X   ( int,     flex_bvhnum,           nflex,         1                    ) \
+    X   ( int,     flexedge_J_rownnz,     nflexedge,     1                    ) \
+    X   ( int,     flexedge_J_rowadr,     nflexedge,     1                    ) \
+    X   ( int,     flexedge_J_colind,     nJfe,          1                    ) \
+    X   ( int,     flexvert_J_rownnz,     nflexvert,     2                    ) \
+    X   ( int,     flexvert_J_rowadr,     nflexvert,     2                    ) \
+    X   ( int,     flexvert_J_colind,     nJfv,          2                    ) \
     X   ( float,   flex_rgba,             nflex,         4                    ) \
     X   ( float,   flex_texcoord,         nflextexcoord, 2                    )
 
@@ -729,11 +743,10 @@
     X   ( mjtNum,    cinert,            nbody,       10          ) \
     X   ( mjtNum,    flexvert_xpos,     nflexvert,   3           ) \
     X   ( mjtNum,    flexelem_aabb,     nflexelem,   6           ) \
-    X   ( int,       flexedge_J_rownnz, nflexedge,   1           ) \
-    X   ( int,       flexedge_J_rowadr, nflexedge,   1           ) \
-    X   ( int,       flexedge_J_colind, nflexedge,   MJ_M(nv)    ) \
-    X   ( mjtNum,    flexedge_J,        nflexedge,   MJ_M(nv)    ) \
+    X   ( mjtNum,    flexedge_J,        nJfe,        1           ) \
     X   ( mjtNum,    flexedge_length,   nflexedge,   1           ) \
+    X   ( mjtNum,    flexvert_J,        nJfv,        2           ) \
+    X   ( mjtNum,    flexvert_length,   nflexvert,   2           ) \
     X   ( mjtNum,    bvh_aabb_dyn,      nbvhdynamic, 6           ) \
     X   ( int,       ten_wrapadr,       ntendon,     1           ) \
     X   ( int,       ten_wrapnum,       ntendon,     1           ) \
@@ -902,6 +915,10 @@
     X( int,       nbody_awake        ) \
     X( int,       nparent_awake      ) \
     X( int,       nv_awake           ) \
+    X( mjtByte,   flg_energypos      ) \
+    X( mjtByte,   flg_energyvel      ) \
+    X( mjtByte,   flg_subtreevel     ) \
+    X( mjtByte,   flg_rnepost        ) \
     X( mjtNum,    time               ) \
     X( uintptr_t, threadpool         )
 

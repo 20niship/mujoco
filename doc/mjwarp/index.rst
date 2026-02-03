@@ -28,6 +28,71 @@ MJWarp is developed and maintained as a joint effort by `NVIDIA <https://nvidia.
    - MJWarp is mostly feature complete but requires performance optimization, documentation, and testing.
    - The intended audience during Beta are physics engine enthusiasts and learning framework integrators.
 
+.. _MJW_tutorial:
+
+Tutorial notebook
+=================
+
+The MJWarp basics are covered in a
+`tutorial
+notebook <https://colab.research.google.com/github/google-deepmind/mujoco_warp/blob/main/notebooks/tutorial.ipynb>`__.
+
+When To Use MJWarp?
+===================
+
+.. TODO(robotics-simulation): batch renderer
+
+High throughput
+---------------
+
+The MuJoCo ecosystem offers multiple options for batched simulation.
+
+- :ref:`mujoco.rollout <PyRollout>`: Python API for multi-threaded calls to :ref:`mj_step` on CPU. High throughput
+  can be achieved with hardware that has fast cores and large thread counts, but overall performance of applications
+  requiring frequent host<>device transfers (e.g., reinforcement learning with simulation on CPU and learning on GPU)
+  may be bottlenecked by transfer overhead.
+- **mjx.step**: `jax.vmap` and `jax.pmap` enable multi-threaded and multi-device simulation with JAX on CPUs, GPUs, or
+  TPUs.
+- :func:`mujoco_warp.step <mujoco_warp.step>`: Python API for multi-threaded and multi-device simulation with CUDA via
+  Warp on NVIDIA GPUs. Improved scaling for contact-rich scenes compared to the MJX JAX implementation.
+
+.. TODO(robotics-simulation): add link to mjx.step
+.. TODO(robotics-simulation): add step/time comparison plot
+
+Low latency
+-----------
+
+MJWarp is optimized for throughput: the total number of simulation steps per unit time whereas MuJoCo is optimized for
+latency: time for one simulation step. It is expected that a simulation step with MJWarp will be less performant
+than a step with MuJoCo for the same simulation.
+
+As a result, MJWarp is well suited for applications where large numbers of
+samples are required, like reinforcement learning, while MuJoCo is likely more useful for real-time applications like
+online control (e.g., model predictive control) or interactive graphical interfaces (e.g., simulation-based
+teleoperation).
+
+Complex scenes
+--------------
+
+MJWarp scales better than MJX for scenes with many geoms or degrees of freedom, but not as well as MuJoCo. There may be
+significant performance degradation in MJWarp for scenes beyond 60 DoFs. Supporting these larger scenes is a high
+priority and progress is tracked in GitHub issues for: sparse Jacobians
+`#88 <https://github.com/google-deepmind/mujoco_warp/issues/88>`__, block Cholesky factorization and solve
+`#320 <https://github.com/google-deepmind/mujoco_warp/issues/320>`__, constraint islands
+`#886 <https://github.com/google-deepmind/mujoco_warp/issues/886>`__, and sleeping islands
+`#887 <https://github.com/google-deepmind/mujoco_warp/issues/887>`__.
+
+.. TODO(robotic-simulation): add graph for ngeom and nv scaling
+
+Differentiability
+-----------------
+
+The dynamics API in MJX is automatically differentiable via JAX. We are considering whether to support this in MJWarp
+via Warp - if this feature is important to you, please chime in on this issue
+`here <https://github.com/google-deepmind/mujoco_warp/issues/500>`__.
+
+.. TODO(robotics-simulation): Newton multi-physics
+
 .. _MJW_install:
 
 Installation
@@ -155,7 +220,7 @@ Minimal example
 Command line scripts
 --------------------
 
-Benchmark an environment with testspeed
+Benchmark an environment with _`testspeed`
 
 .. code-block:: shell
 
@@ -183,8 +248,6 @@ The following features are **not supported** in MJWarp:
 
    * - Category
      - Feature
-   * - :ref:`Equality <mjtEq>`
-     - ``FLEX``
    * - :ref:`Integrator <mjtIntegrator>`
      - ``IMPLICIT``, ``IMPLICITFAST`` not supported with fluid drag
    * - :ref:`Solver <mjtSolver>`
@@ -194,7 +257,7 @@ The following features are **not supported** in MJWarp:
    * - :ref:`Sensors <mjtSensor>`
      - ``GEOMDIST``, ``GEOMNORMAL``, ``GEOMFROMTO``
    * - Flex
-     - ``VERTCOLLIDE=false``, ``INTERNAL=true``, ``nflex > 1``
+     - ``VERTCOLLIDE=false``, ``INTERNAL=true``
    * - Jacobian format
      - ``SPARSE``
    * - Option
@@ -314,6 +377,42 @@ To enable this routine set ``Model.opt.ls_parallel=True`` or add a custom numeri
 
   The parallel linesearch is currently an experimental feature.
 
+.. _mjwBatch:
+
+
+Memory
+------
+
+Simulation throughput is often limited by memory requirements for large numbers of worlds. Considerations for optimizing
+memory utilization include:
+
+- CCD colliders require more memory than primitive colliders, see MuJoCo's :ref:`pair-wise colliders table <coPairwise>`
+  for information about colliders.
+- :ref:`multiccd <option-flag-multiccd>` requires more memory than CCD.
+- CCD memory requirements scale linearly with :ref:`Option.ccd_iterations <option-ccd_iterations>`.
+- A scene with at least one mesh geom and using :ref:`multiccd <option-flag-multiccd>` will have memory requirements
+  that scale linearly with the maximum number of vertices per face and with the maximum number of edges per vertex,
+  computed over all meshes.
+
+`testspeed`_ provides the flag ``--memory`` for reporting a simulation's total memory utilization and information about
+:class:`mjw.Model <mujoco_warp.Model>` and :class:`mjw.Data <mujoco_warp.Data>` fields that require significant memory.
+Memory allocated inline, including for CCD and the constraint solver, can also be significant and is reported as
+``Other memory``.
+
+.. admonition:: Maximum number of contacts per collider
+  :class: note
+
+  Some MJWarp colliders have a different maximum number of contacts compared to MuJoCo:
+
+  - ``PLANE<>MESH``: 4 versus 3
+  - ``HFieldCCD``: 4 versus ``mjMAXCONPAIR``
+
+.. admonition:: Sparsity
+  :class: note
+
+  Sparse Jacobians can enable significant memory savings. Updates for this feature are tracked in GitHub issue
+  `#88 <https://github.com/google-deepmind/mujoco_warp/issues/88>`__.
+
 Batched :class:`Model <mujoco_warp.Model>` Fields
 =================================================
 
@@ -321,8 +420,14 @@ To enable batched simulation with different model parameter values, many :class:
 have a leading batch dimension. By default, the leading dimension is 1 (i.e., ``field.shape[0] == 1``) and the same
 value(s) will be applied to all worlds. It is possible to override one of these fields with a ``wp.array`` that has a
 leading dimension greater than one. This field will be indexed with a modulo operation of the world id and batch
-dimension: ``field[worldid % field.shape[0]]``. Importantly, the field shape should be overridden prior to
-:ref:`graph capture <mjwGC>` (i.e., ``wp.ScopedCapture``)
+dimension: ``field[worldid % field.shape[0]]``.
+
+.. admonition:: Graph capture
+  :class: warning
+
+  The field array should be overridden prior to
+  :ref:`graph capture <mjwGC>` (i.e., ``wp.ScopedCapture``)
+  since the update will not be applied to an existing graph.
 
 .. code-block:: python
 
@@ -343,8 +448,20 @@ It is possible to override the field shape and set the field values after graph 
      mjw.step(m, d)
 
    # set batched values
-   dof_damping_batch = wp.array([[0.1], [0.2]], dtype=float)
-   wp.copy(m.dof_damping, dof_damping_batch)  # m.dof = dof_damping_batch will not update the captured graph
+   dof_damping = wp.array([[0.1], [0.2]], dtype=float)
+   wp.copy(m.dof_damping, dof_damping)  # m.dof = dof_damping will not update the captured graph
+
+Modifying fields
+----------------
+
+The recommended workflow for modifying an :ref:`mjModel` field is to first modify the corresponding :ref:`mjSpec` and
+then compile to create a new :ref:`mjModel` with the updated field. However, compilation currently requires a host call:
+1 call per new field instance, i.e., ``nworld`` host calls for ``nworld`` instances.
+
+Certain fields are safe to modify directly without compilation, enabling on-device updates. Please see
+:ref:`mjModel changes<sichange>` for details about specific fields. Additionally,
+`GitHub issue 893 <https://github.com/google-deepmind/mujoco_warp/issues/893>`__ tracks adding on-device updates for a
+subset of fields.
 
 .. admonition:: Heterogeneous worlds
    :class: note
@@ -364,7 +481,7 @@ Learning frameworks
 Yes. MJWarp is interoperable with `JAX <https://jax.readthedocs.io/>`__. Please see the
 `Warp Interoperability <https://nvidia.github.io/warp/modules/interoperability.html#jax>`__ documentation for details.
 
-Additionally, :ref:`MJX <mjx>` provides a JAX API for a subset of MJWarp's :doc:`API <api>`. The backend is
+Additionally, :ref:`MJX <mjx>` provides a JAX API for a subset of MJWarp's :doc:`API <api>`. The implementation is
 specified with ``impl='warp'``.
 
 **Does MJWarp work with PyTorch?**
@@ -384,6 +501,8 @@ For examples that train policies with MJWarp physics, please see:
 
 Features
 --------
+
+.. _mjwDiff:
 
 **Is MJWarp differentiable?**
 
@@ -440,3 +559,123 @@ Orientations are represented as unit quaternions and follow :ref:`MuJoCo's conve
   operations and instead implements quaternion routines that follow MuJoCo's conventions. Please see
   `math.py <https://github.com/google-deepmind/mujoco_warp/blob/main/mujoco_warp/_src/math.py>`__ for the
   implementations.
+
+**Does MJWarp have a named access API / bind?**
+
+No. Updates for this feature are tracked in this
+`GitHub issue <https://github.com/google-deepmind/mujoco_warp/issues/884>`__.
+
+**Why are contacts reported when there are no collisions?**
+
+1 contact will be reported for each unique geom pair that contributes to any collision sensor, even if this geom pair is
+not in collision. Unlike MuJoCo or MJX where :ref:`collision sensors<collision-sensors>` make separate calls to
+collision routines while computing sensor data, MJWarp computes and stores the data for these sensors in contacts while
+running its main collision pipeline.
+
+:ref:`Contact sensors<sensor-contact>` will report the correct information for contacts affecting the physics.
+
+**Why are Jacobians always dense?**
+
+Sparse Jacobians are not currently implemented and ``Data`` fields: ``ten_J``, ``actuator_moment``, ``flexedge_J``, and
+``efc.J`` are always represented as dense matrices. Support for sparse Jacobians is tracked in GitHub issue
+`#88 <https://github.com/google-deepmind/mujoco_warp/issues/88>`__.
+
+**Why do some arrays have different shapes compared to mjModel or mjData?**
+
+By default for batched simulation, many :class:`mjw.Data <mujoco_warp.Data>` fields having a leading batch dimension of
+size ``Data.nworld``. Some :class:`mjw.Model <mujoco_warp.Model>` fields having a leading batch dimension with size
+``1``, indicating that this
+:ref:`field can be overridden with an array of batched parameters for domain randomization <mjwBatch>`.
+
+Additionally, certain fields including ``Model.qM``, ``Data.efc.J``, and ``Data.efc.D`` are padded to enable fast
+loading on GPU.
+
+**Why are numerical results from MJWarp and MuJoCo different?**
+
+MJWarp utilizes `float <https://nvidia.github.io/warp/modules/functions.html#warp.float32>`__s in contrast to MuJoCo's
+default double representation for :ref:`mjtNum`. Solver settings, including iterations, collision detection, and small
+friction values may be sensitive to differences in floating point representation.
+
+If you encounter unexpected results, including NaNs, please open a GitHub issue.
+
+**Why is inertia matrix qM sparsity not consistent with MuJoCo / MJX?**
+
+.. admonition:: ``mjtJacobian`` semantics
+   :class: note
+
+   - MuJoCo's inertia matrix is always sparse and :ref:`mjtJacobian` affects constraint Jacobians and related quantities
+   - MJWarp's (and MJX's) constraint Jacobian is always dense and :ref:`mjtJacobian` is repurposed to affect the inertia
+     matrix that can be represented as dense or sparse
+
+The automatic sparsity threshold utilized by MJWarp for ``AUTO`` is optimized for GPU and set to ``nv > 32``,
+unlike MuJoCo and MJX which use ``nv >= 60``. Dense ``DENSE`` and sparse ``SPARSE`` settings are consistent with MuJoCo
+and MJX.
+
+This feature is likely to change in the future.
+
+**How to fix simulation runtime warnings?**
+
+Warnings are provided when memory requirements exceed existing allocations during simulation:
+
+- `nconmax`_ / `njmax`_: The maximum number of contacts / constraints has been exceeded. Increase the value of the
+  setting by updating the relevant argument to :func:`mjw.make_data <mujoco_warp.make_data>` or
+  :func:`mjw.put_data <mujoco_warp.put_data>`.
+- ``mjw.Option.ccd_iterations``: The convex collision detection algorithm has exceeded the maximum number of iterations.
+  Increase the value of this setting in the XML / :ref:`mjSpec` / :ref:`mjModel`. Importantly, this change must be made
+  to the :ref:`mjModel` instance that is provided to :func:`mjw.put_model <mujoco_warp.put_model>` and
+  :func:`mjw.make_data <mujoco_warp.make_data>` / :func:`mjw.put_data <mujoco_warp.put_data>`.
+- ``mjw.Option.contact_sensor_maxmatch``: The maximum number of contact matches for a
+  :ref:`contact sensor<sensor-contact>`'s matching criteria has been exceeded. Increase the value of this MJWarp-only
+  setting `m.opt.contact_sensor_maxmatch`. Alternatively, refactor the contact sensor matching criteria, for example if
+  the 2 geoms of interest are known, specify ``geom1`` and ``geom2``.
+- ``height field collision overflow``: The number of potential contacts generated by a height field exceeds
+  :ref:`mjMAXCONPAIR <glNumeric>` and some contacts are ignored. To resolve this warning, reduce the height field
+  resolution or reduce the size of the geom interacting with the height field.
+
+Compilation
+-----------
+
+**How can compilation time be improved?**
+
+Limit the number of unique colliders that require the general convex collision pipeline. These colliders are listed as
+``_CONVEX_COLLISION_PAIRS`` in
+`collision_convex.py <https://github.com/google-deepmind/mujoco_warp/blob/main/mujoco_warp/_src/collision_convex.py>`__.
+Improvements to the compilation time for the pipeline are tracked in this
+`GitHub issue <https://github.com/google-deepmind/mujoco_warp/issues/813>`__.
+
+**Why are the physics not working as expected after upgrading MJWarp?**
+
+The Warp cache may be incompatible with the current code and should be cleared as part of the debugging process. This
+can be accomplished by deleting the directory ``~/.cache/warp`` or via Python
+
+.. code-block:: python
+
+   import warp as wp
+   wp.clear_kernel_cache()
+
+**Is it possible to compile MJWarp ahead of time instead of at runtime?**
+
+Yes. Please see Warp's
+`Ahead-of-Time Compilation Workflows <https://nvidia.github.io/warp/codegen.html#ahead-of-time-compilation-workflows>`__
+documentation for details.
+
+Differences from MuJoCo
+=======================
+
+This section notes differences between MJWarp and MuJoCo.
+
+Warmstart
+---------
+
+If warmstarts are not :ref:`disabled <option-flag-warmstart>`, the MJWarp solver warmstart always initializes the
+acceleration with ``qacc_warmstart``. In contrast, MuJoCo performs a comparison between ``qacc_smooth`` and
+``qacc_warmstart`` to determine which one is utilized for the initialization.
+
+Inertia matrix factorization
+----------------------------
+
+When using dense computation, MJWarp's factorization of the inertia matrix ``qLD`` is computed with Warp's ``L'L``
+Cholesky factorization
+`wp.tile_cholesky <https://nvidia.github.io/warp/language_reference/_generated/warp._src.lang.tile_cholesky.html>`__
+and the result is not expected to match MuJoCo's corresponding field because a different reverse-mode ``L'DL`` routine
+:ref:`mj_factorM` is utilized.

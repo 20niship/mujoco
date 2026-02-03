@@ -15,11 +15,10 @@
 #ifndef MUJOCO_SRC_EXPERIMENTAL_STUDIO_APP_H_
 #define MUJOCO_SRC_EXPERIMENTAL_STUDIO_APP_H_
 
-#include <chrono>
-#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <optional>
-#include <ratio>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -27,8 +26,8 @@
 
 #include <mujoco/mujoco.h>
 #include "experimental/platform/gui.h"
-#include "experimental/platform/helpers.h"
 #include "experimental/platform/interaction.h"
+#include "experimental/platform/picture_gui.h"
 #include "experimental/platform/renderer.h"
 #include "experimental/platform/sim_history.h"
 #include "experimental/platform/sim_profiler.h"
@@ -40,16 +39,37 @@ namespace mujoco::studio {
 // Owns, updates, and renders a MuJoCo simulation.
 class App {
  public:
-  using Clock = std::chrono::steady_clock;
-  using TimePoint = std::chrono::time_point<Clock>;
-  using Seconds = std::chrono::duration<double>;
-  using Milliseconds = std::chrono::duration<double, std::milli>;
+  // Configuration/initialization options for the application.
+  struct Config {
+    // The original width and height of the window.
+    int width = 0;
+    int height = 0;
 
-  App(int width, int height, std::string ini_path,
-      const platform::LoadAssetFn& load_asset_fn);
+    // The path to the ini file containing the user settings.
+    std::string ini_path;
 
-  // Loads a model into the simulation.
-  void LoadModel(std::string model_file);
+    // By default, we render directly to the window surface. However, in some
+    // cases, we may want to render to an (offscreen) texture and blit the
+    // texture to the window surface.
+    bool offscreen_mode = false;
+  };
+
+  explicit App(Config config);
+
+  // Loads an empty mjModel.
+  void InitEmptyModel();
+
+  // Loads an mjModel from the given file. This extension should be one of:
+  // .xml, .mjb, or .mjz.
+  void LoadModelFromFile(const std::string& filepath);
+
+  // Loads an mjModel from the given memory buffer. The content_type should be
+  // one of: "text/xml", "application/mjb", or "application/mjz". For zip files,
+  // a name is required in order to uniquely identify the model within the
+  // archive.
+  void LoadModelFromBuffer(std::span<const std::byte> buffer,
+                           std::string_view content_type,
+                           std::string_view name);
 
   // Processes window events and advances the state of the simulation.
   bool Update();
@@ -62,8 +82,12 @@ class App {
   void Render();
 
  private:
-  static int LoadAssetCallback(const char* path, void* user_data,
-                               unsigned char** out, std::uint64_t* out_size);
+  // The kind of model that is currently loaded.
+  enum ModelKind {
+    kEmptyModel,
+    kModelFromFile,
+    kModelFromBuffer,
+  };
 
   // UI state that is persisted across application runs
   struct UiState {
@@ -81,20 +105,20 @@ class App {
   // UI state that is transient and only needed while the application runs
   struct UiTempState {
     bool should_exit = false;
+    bool first_frame = true;
 
     // Windows.
     bool help = false;
-    bool info = false;
-    bool chart_cpu_time = false;
-    bool chart_dimensions = false;
+    bool stats = false;
     bool chart_solver = false;
+    bool chart_performance = false;
+    bool picture_in_picture = false;
     bool options_panel = true;
     bool inspector_panel = true;
+    bool full_screen = false;
     bool style_editor = false;
     bool imgui_demo = false;
     bool implot_demo = false;
-    bool modal_open = false;
-    bool load_popup = false;
 
     // Controls.
     bool perturb_active = false;
@@ -106,28 +130,49 @@ class App {
     std::vector<std::string> camera_names;
     std::vector<std::string> speed_names;
 
+    // Spec Properties.
+    mjsElement* element = nullptr;
+    int element_id = -1;
+
     // State.
     int state_sig = 0;
     std::vector<mjtNum> state;
 
+    // Picture-in-Picture.
+    std::vector<platform::PipState> pips;
+
     // File dialogs.
+    enum FileDialog {
+      FileDialog_None,
+      FileDialog_Load,
+      FileDialog_SaveXml,
+      FileDialog_SaveMjb,
+      FileDialog_PrintModel,
+      FileDialog_PrintData,
+      FileDialog_SaveScreenshot,
+      NumFileDialogs,
+    };
+    FileDialog file_dialog = FileDialog_None;
+    std::string last_path[NumFileDialogs];
     char filename[1000] = "";
-    std::string last_load_file;
-    bool save_xml_popup = false;
-    std::string last_save_xml_file;
-    bool save_mjb_popup = false;
-    std::string last_save_mjb_file;
-    bool save_screenshot_popup = false;
-    std::string last_save_screenshot_file;
-    bool print_model_popup = false;
-    std::string last_print_model_file;
-    bool print_data_popup = false;
-    std::string last_print_data_file;
   };
 
+  // Requests that the model be loaded from the given file at the next update.
+  void RequestModelLoad(std::string model_file);
+
+  // Requests that the currently loaded model be reloaded at the next update.
+  void RequestModelReload();
+
+  // Clears the currently loaded model and all associated state.
   void ClearModel();
-  void ProcessPendingLoad();
-  bool IsModelLoaded() const;
+
+  // Updates the currently loaded model to the given model. If model is null,
+  // then compile the spec to a model.
+  void InitModel(mjModel* model, mjSpec* spec, mjVFS* vfs, std::string filename,
+                 ModelKind model_kind);
+
+  void SetLoadError(std::string error);
+  void UpdateFilePaths(const std::string& resolved_path);
 
   void ResetPhysics();
   void UpdatePhysics();
@@ -139,8 +184,12 @@ class App {
 
   void SetSpeedIndex(int idx);
 
+  void HandleWindowEvents();
   void HandleMouseEvents();
   void HandleKeyboardEvents();
+
+  void ProcessPendingLoads();
+
   void MoveCamera(platform::CameraMotion motion, mjtNum reldx, mjtNum reldy);
 
   void SetupTheme(platform::GuiTheme theme);
@@ -152,25 +201,32 @@ class App {
   void FileDialogGui();
   void ModelOptionsGui();
   void DataInspectorGui();
+  void SpecExplorerGui();
+  void PropertiesGui();
 
   float GetExpectedLabelWidth();
   std::vector<const char*> GetCameraNames();
 
-  std::string error_;
   std::string ini_path_;
-  std::string model_file_;
+  std::string model_name_;  // Used if model_kind_ is kModelFromBuffer.
+  std::string model_path_;
+  std::string load_error_;
+  std::string step_error_;
   std::optional<std::string> pending_load_;
+  ModelKind model_kind_ = kEmptyModel;
 
   std::unique_ptr<platform::Window> window_;
   std::unique_ptr<platform::Renderer> renderer_;
-  platform::LoadAssetFn load_asset_fn_;
   platform::StepControl step_control_;
   platform::SimProfiler profiler_;
   platform::SimHistory history_;
 
+  std::vector<std::string> search_paths_;
+
   mjSpec* spec_ = nullptr;
   mjModel* model_ = nullptr;
   mjData* data_ = nullptr;
+  std::vector<std::byte> pixels_;
 
   mjvCamera camera_;
   mjvPerturb perturb_;
@@ -178,10 +234,6 @@ class App {
 
   UiState ui_;
   UiTempState tmp_;
-
-  int frames_ = 0;
-  TimePoint last_fps_update_;
-  double fps_ = 0;
 };
 
 }  // namespace mujoco::studio

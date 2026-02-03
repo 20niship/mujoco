@@ -16,10 +16,28 @@ cmake_minimum_required(VERSION 3.16)
 
 set(MUJOCO_PLATFORM_TARGET_NAME mujoco_platform)
 
+# Determine the render configuration and dependencies based options.
+if(MUJOCO_USE_FILAMENT AND MUJOCO_USE_FILAMENT_VULKAN)
+    set(MUJOCO_PLATFORM_RENDER_CONFIG "USE_FILAMENT_VULKAN")
+    set(MUJOCO_PLATFORM_RENDER_DEPS "mujoco::filament")
+elseif(MUJOCO_USE_FILAMENT)
+    set(MUJOCO_PLATFORM_RENDER_CONFIG "USE_FILAMENT_OPENGL")
+    set(MUJOCO_PLATFORM_RENDER_DEPS "mujoco::filament")
+else()
+    set(MUJOCO_PLATFORM_RENDER_CONFIG "USE_CLASSIC_OPENGL")
+    set(MUJOCO_PLATFORM_RENDER_DEPS "dear_imgui_OpenGL3")
+endif()
+
 add_library(${MUJOCO_PLATFORM_TARGET_NAME} STATIC)
+
+target_compile_definitions(${MUJOCO_PLATFORM_TARGET_NAME}
+    PUBLIC
+        -D${MUJOCO_PLATFORM_RENDER_CONFIG}
+)
 
 target_sources(${MUJOCO_PLATFORM_TARGET_NAME}
     PUBLIC
+        file_dialog.h
         gui.cc
         gui.h
         helpers.cc
@@ -28,6 +46,10 @@ target_sources(${MUJOCO_PLATFORM_TARGET_NAME}
         imgui_widgets.h
         interaction.cc
         interaction.h
+        picture_gui.h
+        picture_gui.cc
+        plugin.cc
+        plugin.h
         renderer.cc
         renderer.h
         sim_history.cc
@@ -45,6 +67,19 @@ if(APPLE)
         COMPILE_FLAGS "-x objective-c++")
     target_sources(${MUJOCO_PLATFORM_TARGET_NAME} PUBLIC
         window_osx.mm
+        file_dialog_cocoa.mm
+    )
+elseif(UNIX AND NOT APPLE)
+    target_sources(${MUJOCO_PLATFORM_TARGET_NAME} PUBLIC
+        file_dialog_zenity.cc
+    )
+elseif(WINDOWS)
+    target_sources(${MUJOCO_PLATFORM_TARGET_NAME} PUBLIC
+        file_dialog_win.cc
+    )
+else()
+    target_sources(${MUJOCO_PLATFORM_TARGET_NAME} PUBLIC
+        file_dialog.cc
     )
 endif()
 
@@ -61,9 +96,11 @@ include(third_party_deps/libwebp)
 
 target_link_libraries(${MUJOCO_PLATFORM_TARGET_NAME}
     dear_imgui
+    dear_imgui_SDL2
     implot
     webp
     SDL2::SDL2-static
+    ${MUJOCO_PLATFORM_RENDER_DEPS}
 )
 
 add_library(mujoco::platform ALIAS ${MUJOCO_PLATFORM_TARGET_NAME})

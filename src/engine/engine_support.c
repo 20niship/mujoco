@@ -14,6 +14,7 @@
 
 #include "engine/engine_support.h"
 
+#include <inttypes.h>  // IWYU pragma: keep
 #include <stddef.h>
 
 #include <mujoco/mjdata.h>
@@ -25,6 +26,7 @@
 #include "engine/engine_collision_primitive.h"
 #include "engine/engine_core_util.h"
 #include "engine/engine_crossplatform.h"
+#include "engine/engine_memory.h"
 #include "engine/engine_memory.h"
 #include "engine/engine_util_blas.h"
 #include "engine/engine_util_errmem.h"
@@ -41,8 +43,8 @@
 
 //-------------------------- Constants -------------------------------------------------------------
 
- #define mjVERSION 340
-#define mjVERSIONSTRING "3.4.0"
+ #define mjVERSION 341
+#define mjVERSIONSTRING "3.4.1"
 
 // names of disable flags
 const char* mjDISABLESTRING[mjNDISABLE] = {
@@ -111,6 +113,16 @@ const int mjCONDATA_SIZE[mjNCONDATA] = {
 };
 
 
+// size of ray data fields
+const int mjRAYDATA_SIZE[mjNRAYDATA] = {
+  1,  // mjRAYDATA_DIST
+  3,  // mjRAYDATA_DIR
+  3,  // mjRAYDATA_ORIGIN
+  3,  // mjRAYDATA_POINT
+  3,  // mjRAYDATA_NORMAL
+  1   // mjRAYDATA_DEPTH
+};
+
 //-------------------------- get/set state ---------------------------------------------------------
 
 // return size of a single state element
@@ -164,9 +176,15 @@ static inline const mjtNum* mj_stateElemConstPtr(const mjModel* m, const mjData*
 
 
 // get size of state signature
-int mj_stateSize(const mjModel* m, unsigned int sig) {
+int mj_stateSize(const mjModel* m, int sig) {
+  if (sig < 0) {
+    mjERROR("invalid state signature %d < 0", sig);
+    return 0;
+  }
+
   if (sig >= (1<<mjNSTATE)) {
-    mjERROR("invalid state signature %u >= 2^mjNSTATE", sig);
+    mjERROR("invalid state signature %d >= 2^mjNSTATE", sig);
+    return 0;
   }
 
   int size = 0;
@@ -182,9 +200,15 @@ int mj_stateSize(const mjModel* m, unsigned int sig) {
 
 
 // get state
-void mj_getState(const mjModel* m, const mjData* d, mjtNum* state, unsigned int sig) {
+void mj_getState(const mjModel* m, const mjData* d, mjtNum* state, int sig) {
+  if (sig < 0) {
+    mjERROR("invalid state signature %d < 0", sig);
+    return;
+  }
+
   if (sig >= (1<<mjNSTATE)) {
-    mjERROR("invalid state signature %u >= 2^mjNSTATE", sig);
+    mjERROR("invalid state signature %d >= 2^mjNSTATE", sig);
+    return;
   }
 
   int adr = 0;
@@ -213,8 +237,17 @@ void mj_getState(const mjModel* m, const mjData* d, mjtNum* state, unsigned int 
 
 
 // extract a sub-state from a state
-void mj_extractState(const mjModel* m, const mjtNum* src, unsigned int srcsig,
-                     mjtNum* dst, unsigned int dstsig) {
+void mj_extractState(const mjModel* m, const mjtNum* src, int srcsig, mjtNum* dst, int dstsig) {
+  if (srcsig < 0) {
+    mjERROR("invalid srcsig %d < 0", srcsig);
+    return;
+  }
+
+  if (srcsig >= (1<<mjNSTATE)) {
+    mjERROR("invalid srcsig %d >= 2^mjNSTATE", srcsig);
+    return;
+  }
+
   if ((srcsig & dstsig) != dstsig) {
     mjERROR("dstsig is not a subset of srcsig");
     return;
@@ -235,9 +268,15 @@ void mj_extractState(const mjModel* m, const mjtNum* src, unsigned int srcsig,
 
 
 // set state
-void mj_setState(const mjModel* m, mjData* d, const mjtNum* state, unsigned int sig) {
+void mj_setState(const mjModel* m, mjData* d, const mjtNum* state, int sig) {
+  if (sig < 0) {
+    mjERROR("invalid state signature %d < 0", sig);
+    return;
+  }
+
   if (sig >= (1<<mjNSTATE)) {
-    mjERROR("invalid state signature %u >= 2^mjNSTATE", sig);
+    mjERROR("invalid state signature %d >= 2^mjNSTATE", sig);
+    return;
   }
 
   int adr = 0;
@@ -266,9 +305,15 @@ void mj_setState(const mjModel* m, mjData* d, const mjtNum* state, unsigned int 
 
 
 // copy state from src to dst
-void mj_copyState(const mjModel* m, const mjData* src, mjData* dst, unsigned int sig) {
+void mj_copyState(const mjModel* m, const mjData* src, mjData* dst, int sig) {
+  if (sig < 0) {
+    mjERROR("invalid state signature %d < 0", sig);
+    return;
+  }
+
   if (sig >= (1<<mjNSTATE)) {
-    mjERROR("invalid state signature %u >= 2^mjNSTATE", sig);
+    mjERROR("invalid state signature %d >= 2^mjNSTATE", sig);
+    return;
   }
 
   for (int i=0; i < mjNSTATE; i++) {
@@ -299,7 +344,7 @@ void mj_copyState(const mjModel* m, const mjData* src, mjData* dst, unsigned int
 void mj_setKeyframe(mjModel* m, const mjData* d, int k) {
   // check keyframe index
   if (k >= m->nkey) {
-    mjERROR("index must be smaller than %d (keyframes allocated in model)", m->nkey);
+    mjERROR("index must be smaller than %" PRId64 " (keyframes allocated in model)", m->nkey);
   }
   if (k < 0) {
     mjERROR("keyframe index cannot be negative");
@@ -708,4 +753,56 @@ int mju_condataSize(int dataspec) {
     }
   }
   return size;
+}
+
+
+// return total size of data in a rangefinder sensor bitfield specification
+int mju_raydataSize(int dataspec) {
+  int size = 0;
+  for (int i=0; i < mjNRAYDATA; i++) {
+    if (dataspec & (1 << i)) {
+      size += mjRAYDATA_SIZE[i];
+    }
+  }
+  return size;
+}
+
+
+// compute camera pixel parameters from model, output are:
+//   pixel units: fx, fy (focal lengths), cx, cy (principal point)
+//   length units: extent
+void mju_camIntrinsics(const mjModel* m, int camid,
+                       mjtNum* fx, mjtNum* fy, mjtNum* cx, mjtNum* cy, mjtNum* extent) {
+  const int width = m->cam_resolution[2*camid];
+  const int height = m->cam_resolution[2*camid+1];
+  const float* sensorsize = m->cam_sensorsize + 2*camid;
+  const float* intrinsic = m->cam_intrinsic + 4*camid;
+  const mjtProjection projection = (mjtProjection)m->cam_projection[camid];
+
+  switch (projection) {
+  case mjPROJ_PERSPECTIVE:
+    if (sensorsize[0] && sensorsize[1]) {
+      // intrinsic-based perspective camera
+      *fx = intrinsic[0] / sensorsize[0] * width;
+      *fy = intrinsic[1] / sensorsize[1] * height;
+      *cx = intrinsic[2] / sensorsize[0] * width;
+      *cy = intrinsic[3] / sensorsize[1] * height;
+    } else {
+      // fovy-based perspective camera
+      *fx = *fy = 0.5 / mju_tan(m->cam_fovy[camid] * mjPI / 360.0) * height;
+      *cx = (mjtNum)width / 2.0;
+      *cy = (mjtNum)height / 2.0;
+    }
+    break;
+  case mjPROJ_ORTHOGRAPHIC:
+    // orthographic: normalize pixel offset to [-1, 1]
+    *fx = (mjtNum)width / 2.0;
+    *fy = (mjtNum)height / 2.0;
+    *cx = *fx;
+    *cy = *fy;
+    break;
+  }
+
+  // extent only used for orthographic cameras
+  *extent = m->cam_fovy[camid];
 }

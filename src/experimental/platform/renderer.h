@@ -16,9 +16,9 @@
 #define MUJOCO_SRC_EXPERIMENTAL_PLATFORM_RENDERER_H_
 
 #include <chrono>
-#include <cstdint>
-#include <functional>
-#include <string>
+#include <cstddef>
+#include <ratio>
+#include <span>
 
 #include <mujoco/mujoco.h>
 
@@ -28,12 +28,12 @@ namespace mujoco::platform {
 // using the filament rendering backend.
 class Renderer {
  public:
-  // Function that creates a mjrContext for the given model. We use a function
-  // to allow different mjrContext implementations to be created without
-  // requiring a direct dependency on them.
-  using MakeContextFn = std::function<void(const mjModel* m, mjrContext* con)>;
+  using Clock = std::chrono::steady_clock;
+  using TimePoint = std::chrono::time_point<Clock>;
+  using Seconds = std::chrono::duration<double>;
+  using Milliseconds = std::chrono::duration<double, std::milli>;
 
-  explicit Renderer(MakeContextFn make_context_fn);
+  explicit Renderer(void* native_window);
   ~Renderer();
 
   Renderer(const Renderer&) = delete;
@@ -42,29 +42,44 @@ class Renderer {
   // Initializes the renderer with the given mjModel.
   void Init(const mjModel* model);
 
-  // Renders the simulation state into the active window. Also renders the imgui
-  // state, but that is obtained directly from the ImGui library.
+  // Renders the simulation and ux state. Renders into `pixels` if provided,
+  // otherwise renders to the `native_window` provided at construction.
   void Render(const mjModel* model, mjData* data, const mjvPerturb* perturb,
               mjvCamera* camera, const mjvOption* vis_option, int width,
-              int height);
+              int height, std::span<std::byte> pixels = {});
 
-  // Saves a screenshot of the simulation state into the given file.
-  void SaveScreenshot(const std::string& filename, int width, int height);
+  // Populates the given output buffer with RGB888 pixel data. The size of the
+  // output buffer must be at least width * height * 3.
+  void RenderToTexture(const mjModel* model, mjData* data, mjvCamera* camera,
+                       int width, int height, std::byte* output);
+
+  // Uploads an image to the backend for GUI rendering, returning the texture
+  // ID for the texture. The ID can be used in subsequent calls to update the
+  // texture data. A nullptr pixels argument will free the texture if it exists.
+  // A texture ID of 0 will create a new texture.
+  int UploadImage(int texture_id, const std::byte* pixels, int width,
+                  int height, int bpp);
 
   // Rendering flags.
   mjtByte* GetRenderFlags() { return scene_.flags; }
 
-  // Returns the render context.
-  const mjrContext& GetContext() const { return render_context_; }
+  // Returns the current frame rate.
+  double GetFps();
 
  private:
   // Resets the renderer; no rendering will occur until Init() is called again.
   void Deinit();
 
-  MakeContextFn make_context_fn_;
+  void UpdateFps();
+
+  void* native_window_ = nullptr;
   mjrContext render_context_;
   mjvScene scene_;
   bool initialized_ = false;
+  mjtNum last_update_time_ = -1;
+  int frames_ = 0;
+  TimePoint last_fps_update_;
+  double fps_ = 0;
 };
 
 }  // namespace mujoco::platform

@@ -98,7 +98,7 @@ int mj_floodFill(int* island, int nr, const int* rownnz, const int* rowadr, cons
                  int* stack) {
   // initialize island count, set ids to -1
   int nisland = 0;
-  for (int i=0; i < nr; i++) island[i] = -1;
+  mju_fillInt(island, -1, nr);
 
   // iterate over vertices, discover islands
   for (int i=0; i < nr; i++) {
@@ -352,7 +352,9 @@ static int findEdges(const mjModel* m, const mjData* d, int* treenedge, int* edg
     // row i is still in the same constraint: skip it,
     if (efc_type == d->efc_type[i] && efc_id == d->efc_id[i]) {
       // unless it is a flex equality, where the tree pattern changes per dof
-      if (!(efc_type == mjCNSTR_EQUALITY && m->eq_type[efc_id] == mjEQ_FLEX)) {
+      if (!(efc_type == mjCNSTR_EQUALITY &&
+            (m->eq_type[efc_id] == mjEQ_FLEX ||
+             m->eq_type[efc_id] == mjEQ_FLEXVERT))) {
         continue;
       }
     }

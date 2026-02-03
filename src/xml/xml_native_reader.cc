@@ -45,9 +45,6 @@
 #include "xml/xml_base.h"
 #include "xml/xml_util.h"
 #include "tinyxml2.h"
-#ifdef mjUSEUSD
-#include <mujoco/experimental/usd/usd.h>
-#endif  // mjUSEUSD
 
 namespace {
 using std::string;
@@ -171,7 +168,7 @@ std::vector<const char*> MJCF[nMJCF] = {
             "hfield", "mesh", "fitscale", "rgba", "fluidshape", "fluidcoef", "user"},
         {"site", "?", "type", "group", "pos", "quat", "material",
             "size", "fromto", "axisangle", "xyaxes", "zaxis", "euler", "rgba", "user"},
-        {"camera", "?", "orthographic", "fovy", "ipd", "resolution", "pos", "quat",
+        {"camera", "?", "projection", "fovy", "ipd", "resolution", "output", "pos", "quat",
             "axisangle", "xyaxes", "zaxis", "euler", "mode", "focal", "focalpixel",
             "principal", "principalpixel", "sensorsize", "user"},
         {"light", "?", "pos", "dir", "bulbradius", "intensity", "range",
@@ -285,7 +282,7 @@ std::vector<const char*> MJCF[nMJCF] = {
         {"attach", "*", "model", "body", "prefix"},
         {"site", "*",  "name", "class", "type", "group", "pos", "quat",
             "material", "size", "fromto", "axisangle", "xyaxes", "zaxis", "euler", "rgba", "user"},
-        {"camera", "*", "name", "class", "orthographic", "fovy", "ipd", "resolution", "pos",
+        {"camera", "*", "name", "class", "projection", "fovy", "ipd", "resolution", "output", "pos",
             "quat", "axisangle", "xyaxes", "zaxis", "euler", "mode", "target",
             "focal", "focalpixel", "principal", "principalpixel", "sensorsize", "user"},
         {"light", "*", "name", "class", "directional", "type", "castshadow", "active",
@@ -367,6 +364,8 @@ std::vector<const char*> MJCF[nMJCF] = {
             "active", "solref", "solimp"},
         {"flex", "*", "name", "class", "flex",
             "active", "solref", "solimp"},
+        {"flexvert", "*", "name", "class", "flex",
+            "active", "solref", "solimp"},
     {">"},
 
     {"tendon", "*"},
@@ -381,7 +380,7 @@ std::vector<const char*> MJCF[nMJCF] = {
             {"pulley", "*", "divisor"},
         {">"},
         {"fixed", "*", "name", "class", "group", "limited", "actuatorfrclimited", "range",
-            "actuatorfrcrange","solreflimit", "solimplimit", "solreffriction", "solimpfriction",
+            "actuatorfrcrange", "solreflimit", "solimplimit", "solreffriction", "solimpfriction",
             "frictionloss", "springlength", "margin", "stiffness", "damping", "armature", "user"},
         {"<"},
             {"joint", "*", "joint", "coef"},
@@ -454,7 +453,7 @@ std::vector<const char*> MJCF[nMJCF] = {
         {"torque", "*", "name", "site", "cutoff", "noise", "user"},
         {"magnetometer", "*", "name", "site", "cutoff", "noise", "user"},
         {"camprojection", "*", "name", "site", "camera", "cutoff", "noise", "user"},
-        {"rangefinder", "*", "name", "site", "cutoff", "noise", "user"},
+        {"rangefinder", "*", "name", "site", "camera", "data", "cutoff", "noise", "user"},
         {"jointpos", "*", "name", "joint", "cutoff", "noise", "user"},
         {"jointvel", "*", "name", "joint", "cutoff", "noise", "user"},
         {"tendonpos", "*", "name", "tendon", "cutoff", "noise", "user"},
@@ -590,6 +589,13 @@ const mjMap geom_map[mjNGEOMTYPES] = {
 };
 
 
+// projection type
+const int projection_sz = 2;
+const mjMap projection_map[projection_sz] = {
+  {"perspective",   mjPROJ_PERSPECTIVE},
+  {"orthographic",  mjPROJ_ORTHOGRAPHIC}
+};
+
 // camlight type
 const int camlight_sz = 5;
 const mjMap camlight_map[camlight_sz] = {
@@ -663,13 +669,14 @@ const mjMap solver_map[solver_sz] = {
 
 
 // constraint type
-const int equality_sz = 6;
+const int equality_sz = 7;
 const mjMap equality_map[equality_sz] = {
   {"connect",       mjEQ_CONNECT},
   {"weld",          mjEQ_WELD},
   {"joint",         mjEQ_JOINT},
   {"tendon",        mjEQ_TENDON},
   {"flex",          mjEQ_FLEX},
+  {"flexvert",      mjEQ_FLEXVERT},
   {"distance",      mjEQ_DISTANCE}
 };
 
@@ -775,6 +782,24 @@ const mjMap condata_map[mjNCONDATA] = {
   {"tangent",       mjCONDATA_TANGENT}
 };
 
+
+// rangefinder data type
+const mjMap raydata_map[mjNRAYDATA] = {
+  {"dist",          mjRAYDATA_DIST},
+  {"dir",           mjRAYDATA_DIR},
+  {"origin",        mjRAYDATA_ORIGIN},
+  {"point",         mjRAYDATA_POINT},
+  {"normal",        mjRAYDATA_NORMAL},
+  {"depth",         mjRAYDATA_DEPTH}
+};
+
+// camera output type
+const int camout_sz = mjNCAMOUT;
+const mjMap camout_map[mjNCAMOUT] = {{"rgb", mjCAMOUT_RGB},
+                                     {"depth", mjCAMOUT_DEPTH},
+                                     {"distance", mjCAMOUT_DIST},
+                                     {"normal", mjCAMOUT_NORMAL},
+                                     {"segmentation", mjCAMOUT_SEG}};
 
 // contact reduction type
 const int reduce_sz = 4;
@@ -892,6 +917,14 @@ const mjMap elastic2d_map[5] = {
   {"bend",          1},
   {"stretch",       2},
   {"both",          3},
+};
+
+
+// flex equality type
+const mjMap flexeq_map[3] = {
+  {"false",         0},
+  {"true",          1},
+  {"vert",          2},
 };
 
 
@@ -1926,28 +1959,30 @@ void mjXReader::OneCamera(XMLElement* elem, mjsCamera* camera) {
   ReadAlternative(elem, camera->alt);
   ReadAttr(elem, "ipd", 1, &camera->ipd, text);
 
-  if (MapValue(elem, "orthographic", &n, bool_map, 2)) {
-    camera->orthographic = (n == 1);
+  if (MapValue(elem, "projection", &n, projection_map, 2)) {
+    camera->proj = (mjtProjection)n;
   }
 
-  bool has_principal = ReadAttr(elem, "principalpixel", 2, camera->principal_pixel, text) ||
-                       ReadAttr(elem, "principal", 2, camera->principal_length, text);
-  bool has_focal = ReadAttr(elem, "focalpixel", 2, camera->focal_pixel, text) ||
-                   ReadAttr(elem, "focal", 2, camera->focal_length, text);
-  bool needs_sensorsize = has_principal || has_focal;
-  bool has_sensorsize = ReadAttr(elem, "sensorsize", 2, camera->sensor_size, text, needs_sensorsize);
-  bool has_fovy = ReadAttr(elem, "fovy", 1, &camera->fovy, text);
-  bool needs_resolution = has_focal || has_sensorsize;
-  ReadAttr(elem, "resolution", 2, camera->resolution, text, needs_resolution);
+  ReadAttr(elem, "principalpixel", 2, camera->principal_pixel, text);
+  ReadAttr(elem, "principal", 2, camera->principal_length, text);
+  ReadAttr(elem, "focalpixel", 2, camera->focal_pixel, text);
+  ReadAttr(elem, "focal", 2, camera->focal_length, text);
+  ReadAttr(elem, "resolution", 2, camera->resolution, text);
 
-  if (camera->resolution[0] < 0 || camera->resolution[1] < 0) {
-    throw mjXError(elem, "camera resolution cannot be negative");
+  // read output attribute as space-separated bitflags
+  std::vector<int> outvals(mjNCAMOUT);
+  int nout = MapValues(elem, "output", outvals.data(), camout_map, mjNCAMOUT);
+  if (nout) {
+    camera->output = 0;
+    for (int i = 0; i < nout; ++i) {
+      camera->output |= outvals[i];
+    }
   }
 
-  if (has_fovy && has_sensorsize) {
-    throw mjXError(
-            elem,
-            "either 'fovy' or 'sensorsize' attribute can be specified, not both");
+  bool sensorsize = ReadAttr(elem, "sensorsize", 2, camera->sensor_size, text);
+  bool fovy = ReadAttr(elem, "fovy", 1, &camera->fovy, text);
+  if (fovy && sensorsize) {
+    throw mjXError(elem, "either 'fovy' or 'sensorsize' attribute can be specified, not both");
   }
 
   // read userdata
@@ -2162,6 +2197,7 @@ void mjXReader::OneEquality(XMLElement* elem, mjsEquality* equality) {
         break;
 
       case mjEQ_FLEX:
+      case mjEQ_FLEXVERT:
         ReadAttrTxt(elem, "flex", name1, true);
         break;
 
@@ -2720,9 +2756,7 @@ void mjXReader::OneFlexcomp(XMLElement* elem, mjsBody* body, const mjVFS* vfs) {
   // edge
   XMLElement* edge = FirstChildElement(elem, "edge");
   if (edge) {
-    if (MapValue(edge, "equality", &n, bool_map, 2)) {
-      fcomp.equality = (n == 1);
-    }
+    MapValue(edge, "equality", &fcomp.equality, flexeq_map, 3);
     ReadAttr(edge, "solref", mjNREF, fcomp.def.spec.equality->solref, text, false, false);
     ReadAttr(edge, "solimp", mjNIMP, fcomp.def.spec.equality->solimp, text, false, false);
     ReadAttr(edge, "stiffness", 1, &dflex.edgestiffness, text);
@@ -3419,21 +3453,11 @@ void mjXReader::Asset(XMLElement* section, const mjVFS* vfs) {
       ReadAttrTxt(elem, "content_type", content_type);
 
       // parse the child
-      mjSpec* child = nullptr;
       std::array<char, 1024> error;
       auto filename = modelfiledir_ + ReadAttrFile(elem, "file", vfs).value();
 
-#ifdef mjUSEUSD
-      if (content_type == "text/usd") {
-        child = mj_parseUSD(filename.c_str(), vfs, error.data(), error.size());
-      } else {
-#endif  // mjUSEUSD
-        child = mj_parse(filename.c_str(), content_type.c_str(), vfs,
+      mjSpec* child = mj_parse(filename.c_str(), content_type.c_str(), vfs,
                                error.data(), error.size());
-#ifdef mjUSEUSD
-      }
-#endif  // mjUSEUSD
-
       if (!child) {
         throw mjXError(elem, "could not parse model file with error: %s", error.data());
       }
@@ -4054,8 +4078,34 @@ void mjXReader::Sensor(XMLElement* section) {
       sensor->reftype = mjOBJ_CAMERA;
     } else if (type == "rangefinder") {
       sensor->type = mjSENS_RANGEFINDER;
-      sensor->objtype = mjOBJ_SITE;
-      ReadAttrTxt(elem, "site", objname, true);
+      bool use_site = ReadAttrTxt(elem, "site", objname, false);
+      bool use_camera = ReadAttrTxt(elem, "camera", objname, false);
+      if (use_site == use_camera) {
+        throw mjXError(elem, "rangefinder requires exactly one of 'site' or 'camera'");
+      }
+      sensor->objtype = use_site ? mjOBJ_SITE : mjOBJ_CAMERA;
+
+      // process data specification (intprm[0])
+      int dataspec = 1 << mjRAYDATA_DIST;
+      std::vector<int> raydata(mjNRAYDATA);
+      int nkeys = MapValues(elem, "data", raydata.data(), raydata_map, mjNRAYDATA);
+      if (nkeys) {
+        dataspec = 1 << raydata[0];
+
+        // check ordering while adding bits to dataspec
+        for (int i = 1; i < nkeys; ++i) {
+          if (raydata[i] <= raydata[i-1]) {
+            std::string correct_order;
+            for (int j = 0; j < mjNRAYDATA; ++j) {
+              correct_order += raydata_map[j].key;
+              if (j < mjNRAYDATA - 1) correct_order += ", ";
+            }
+            throw mjXError(elem, "data attributes must be in order: %s", correct_order.c_str());
+          }
+          dataspec |= 1 << raydata[i];
+        }
+      }
+      sensor->intprm[0] = dataspec;
     }
 
     // sensors related to scalar joints, tendons, actuators

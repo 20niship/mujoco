@@ -551,7 +551,7 @@ void mj_printFormattedModel(const mjModel* m, const char* filename, const char* 
     fprintf(fp, "\n");                            \
   }
 
-  MJMODEL_INTS
+  MJMODEL_SIZES
 #undef X
   fprintf(fp, "\n");
 
@@ -636,7 +636,7 @@ void mj_printFormattedModel(const mjModel* m, const char* filename, const char* 
   (void)nu;
   (void)nmocap;
 
-  const int* object_class;
+  const mjtSize* object_class;
 
 #define X(type, name, num, sz)                                              \
   if (&m->num == object_class && sz > 0) {                                  \
@@ -645,6 +645,7 @@ void mj_printFormattedModel(const mjModel* m, const char* filename, const char* 
                                   float:   float_format,                    \
                                   int:     INT_FORMAT,                      \
                                   mjtByte: INT_FORMAT,                      \
+                                  mjtSize: SIZE_FORMAT,                     \
                                   default: NULL);                           \
     if (format) {                                                           \
       fprintf(fp, "  ");                                                    \
@@ -1148,6 +1149,7 @@ void mj_printFormattedData(const mjModel* m, const mjData* d, const char* filena
         d->name,                                                              \
         int : INT_FORMAT,                                                     \
         mjtSize : SIZE_FORMAT,                                                \
+        mjtByte : INT_FORMAT,                                                 \
         default : NULL);                                                      \
     if (format) {                                                             \
       fprintf(fp, "  ");                                                      \
@@ -1280,17 +1282,11 @@ void mj_printFormattedData(const mjModel* m, const mjData* d, const char* filena
 
   printArray2d("FLEXVERT_XPOS", m->nflexvert, 3, d->flexvert_xpos, fp, float_format);
   printArray2d("FLEXELEM_AABB", m->nflexelem, 6, d->flexelem_aabb, fp, float_format);
-  if (!mj_isSparse(m)) {
-    printArray2d("FLEXEDGE_J", m->nflexedge, m->nv, d->flexedge_J, fp, float_format);
-  } else {
-    mj_printSparsity("FLEXEDGE_J: flex edge connectivity", m->nflexedge, m->nv,
-                     d->flexedge_J_rowadr, NULL, d->flexedge_J_rownnz, NULL, d->flexedge_J_colind,
-                     fp);
-    printArray2dInt("FLEXEDGE_J_ROWNNZ", m->nflexedge, 1, d->flexedge_J_rownnz, fp);
-    printArray2dInt("FLEXEDGE_J_ROWADR", m->nflexedge, 1, d->flexedge_J_rowadr, fp);
-    printSparse("FLEXEDGE_J", d->flexedge_J, m->nflexedge, d->flexedge_J_rownnz,
-                              d->flexedge_J_rowadr, d->flexedge_J_colind, fp, float_format);
-  }
+  mj_printSparsity("FLEXEDGE_J: flex edge connectivity", m->nflexedge, m->nv,
+                    m->flexedge_J_rowadr, NULL, m->flexedge_J_rownnz, NULL, m->flexedge_J_colind,
+                    fp);
+  printSparse("FLEXEDGE_J", d->flexedge_J, m->nflexedge, m->flexedge_J_rownnz,
+                            m->flexedge_J_rowadr, m->flexedge_J_colind, fp, float_format);
   printArray2d("FLEXEDGE_LENGTH", m->nflexedge, 1, d->flexedge_length, fp, float_format);
 
   printArray2d("TEN_LENGTH", m->ntendon, 1, d->ten_length, fp, float_format);

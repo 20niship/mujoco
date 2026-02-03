@@ -495,6 +495,15 @@ class MuJoCoBindingsTest(parameterized.TestCase):
     mujoco.mj_forward(self.model, data_copy)
     self.assertEqual(data_copy.ncon, 4)
 
+    # Test copying into existing data.
+    data_copy.qpos[1] = 1.234
+    data_copy.geom_xpos[2] = 5.678
+    self.assertFalse(np.array_equal(self.data.qpos, data_copy.qpos))
+    self.assertFalse(np.array_equal(self.data.geom_xpos, data_copy.geom_xpos))
+    mujoco.mj_copyData(self.data, self.model, data_copy)
+    np.testing.assert_array_equal(self.data.qpos, data_copy.qpos)
+    np.testing.assert_array_equal(self.data.geom_xpos, data_copy.geom_xpos)
+
   def test_mjdata_can_read_warning_array(self):
     warnings = self.data.warning
     self.assertLen(warnings, mujoco.mjtWarning.mjNWARNING)
@@ -1279,8 +1288,9 @@ Euler integrator, semi-implicit in velocity.
     geomid = np.zeros(1, np.int32)
     mujoco.mj_forward(self.model, self.data)
     mujoco.mj_ray(
-        self.model, self.data, [0, 0, 0], [0, 0, 1], None, 0, 0, geomid
+        self.model, self.data, [0, 0, 0], [0, 0, 1], None, 0, 0, geomid, None
     )
+    # Check the normal argument is optional
     mujoco.mj_ray(
         self.model,
         self.data,
@@ -1292,6 +1302,7 @@ Euler integrator, semi-implicit in velocity.
         geomid,
     )
     # Check that named arguments work
+    normal = np.zeros(3, np.float64)
     mujoco.mj_ray(
         m=self.model,
         d=self.data,
@@ -1301,7 +1312,33 @@ Euler integrator, semi-implicit in velocity.
         flg_static=0,
         bodyexclude=0,
         geomid=geomid,
+        normal=normal,
     )
+
+  def test_mju_ray_geom(self):
+    # Test mju_rayGeom with a plane at origin
+    pos = np.zeros(3)
+    mat = np.eye(3).flatten()
+    size = np.array([10.0, 10.0, 1.0])
+    pnt = np.array([5.0, 5.0, 5.0])
+    # Normalize direction for Euclidean distance
+    vec = np.array([-1.0, -1.0, -1.0])
+    vec = vec / np.linalg.norm(vec)
+    normal = np.zeros(3)
+
+    # Call with normal argument
+    dist = mujoco.mju_rayGeom(
+        pos, mat, size, pnt, vec, mujoco.mjtGeom.mjGEOM_PLANE, normal
+    )
+    expected_dist = np.sqrt(3 * 5 * 5)
+    np.testing.assert_allclose(dist, expected_dist)
+    np.testing.assert_allclose(normal, [0, 0, 1])
+
+    # Call without normal argument (should still work)
+    dist2 = mujoco.mju_rayGeom(
+        pos, mat, size, pnt, vec, mujoco.mjtGeom.mjGEOM_PLANE
+    )
+    np.testing.assert_allclose(dist2, expected_dist)
 
   def test_mj_multi_ray(self):
     nray = 3
@@ -1324,6 +1361,7 @@ Euler integrator, semi-implicit in velocity.
         bodyexclude=-1,
         geomid=geomid,
         dist=dist,
+        normal=None,
         nray=nray,
         cutoff=mujoco.mjMAXVAL,
     )
@@ -1331,7 +1369,7 @@ Euler integrator, semi-implicit in velocity.
     for i in range(0, 3):
       self.assertEqual(
           dist[i],
-          mujoco.mj_ray(self.model, self.data, pnt, vec[i], None, 1, -1, geom1),
+          mujoco.mj_ray(self.model, self.data, pnt, vec[i], None, 1, -1, geom1, None),
       )
       self.assertEqual(geomid[i], geom1)
       self.assertEqual(geomid[i], geom_ex[i])

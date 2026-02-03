@@ -38,10 +38,11 @@
 namespace mujoco {
 namespace {
 
+using ::testing::ElementsAre;
+using ::testing::FloatEq;
 using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::NotNull;
-using ::testing::FloatEq;
 
 using XMLWriterTest = PluginTest;
 
@@ -998,6 +999,10 @@ TEST_F(XMLWriterTest, WritesHfield) {
   int size = model->hfield_nrow[0]*model->hfield_ncol[0];
   EXPECT_EQ(size, 6);
 
+  // check that the data is normalized and in row-major, bottom-to-top order
+  EXPECT_THAT(AsVector(model->hfield_data, 6),
+              ElementsAre(.8, 1, .4, .6, 0, .2));
+
   // save and read, compare data
   mjModel* mtemp = LoadModelFromString(SaveAndReadXml(model));
   ASSERT_THAT(mtemp, NotNull());
@@ -1388,6 +1393,7 @@ TEST_F(XMLWriterTest, WriteReadCompare) {
               absl::StrContains(p.path().string(), "shark_") ||
               absl::StrContains(p.path().string(), "perf") ||
               // exclude files that fail the comparison test
+              absl::StrContains(p.path().string(), "rfcamera") ||
               absl::StrContains(p.path().string(), "tactile") ||
               absl::StrContains(p.path().string(), "makemesh") ||
               absl::StrContains(p.path().string(), "many_dependencies") ||
@@ -1664,6 +1670,54 @@ TEST_F(XMLWriterTest, ExpandAttach) {
   EXPECT_THAT(saved_xml, HasSubstr("class=\"bb\""));
   mj_deleteModel(m);
   mj_deleteVFS(vfs.get());
+}
+
+TEST_F(XMLWriterTest, WritesCameraOutput) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <worldbody>
+      <camera name="default_cam"/>
+      <camera name="multi_cam" output="depth normal"/>
+    </worldbody>
+  </mujoco>
+  )";
+  mjModel* model = LoadModelFromString(xml);
+  ASSERT_THAT(model, NotNull());
+  std::string saved_xml = SaveAndReadXml(model);
+  // default output="rgb" should not be written
+  EXPECT_THAT(saved_xml, Not(HasSubstr("output=\"rgb\"")));
+  // non-default output should be written
+  EXPECT_THAT(saved_xml, HasSubstr("output=\"depth normal\""));
+  mj_deleteModel(model);
+}
+
+TEST_F(XMLWriterTest, WritesCameraOutputDefault) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <default>
+      <default class="multi">
+        <camera output="depth distance"/>
+      </default>
+    </default>
+    <worldbody>
+      <camera name="default_cam"/>
+      <camera name="class_cam" class="multi"/>
+      <camera name="override_cam" class="multi" output="segmentation"/>
+    </worldbody>
+  </mujoco>
+  )";
+  mjModel* model = LoadModelFromString(xml);
+  ASSERT_THAT(model, NotNull());
+  std::string saved_xml = SaveAndReadXml(model);
+  // save and reload to verify round-trip
+  mjModel* mtemp = LoadModelFromString(saved_xml);
+  ASSERT_THAT(mtemp, NotNull());
+  EXPECT_EQ(mtemp->ncam, 3);
+  EXPECT_EQ(mtemp->cam_output[0], mjCAMOUT_RGB);
+  EXPECT_EQ(mtemp->cam_output[1], mjCAMOUT_DEPTH | mjCAMOUT_DIST);
+  EXPECT_EQ(mtemp->cam_output[2], mjCAMOUT_SEG);
+  mj_deleteModel(mtemp);
+  mj_deleteModel(model);
 }
 
 }  // namespace

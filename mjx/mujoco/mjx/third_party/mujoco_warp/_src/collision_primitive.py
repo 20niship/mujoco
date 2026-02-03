@@ -535,11 +535,11 @@ def contact_params(
       max_geom_friction = wp.max(geom_friction[friction_id, g1], geom_friction[friction_id, g2])
 
     friction = vec5(
-      wp.max(MJ_MINMU, max_geom_friction[0]),
-      wp.max(MJ_MINMU, max_geom_friction[0]),
-      wp.max(MJ_MINMU, max_geom_friction[1]),
-      wp.max(MJ_MINMU, max_geom_friction[2]),
-      wp.max(MJ_MINMU, max_geom_friction[2]),
+      max_geom_friction[0],
+      max_geom_friction[0],
+      max_geom_friction[1],
+      max_geom_friction[2],
+      max_geom_friction[2],
     )
 
     if geom_solref[solref_id, g1][0] > 0.0 and geom_solref[solref_id, g2][0] > 0.0:
@@ -552,6 +552,14 @@ def contact_params(
     # geom priority is ignored
     margin = wp.max(geom_margin[margin_id, g1], geom_margin[margin_id, g2])
     gap = wp.max(geom_gap[gap_id, g1], geom_gap[gap_id, g2])
+
+  friction = vec5(
+    wp.max(MJ_MINMU, friction[0]),
+    wp.max(MJ_MINMU, friction[1]),
+    wp.max(MJ_MINMU, friction[2]),
+    wp.max(MJ_MINMU, friction[3]),
+    wp.max(MJ_MINMU, friction[4]),
+  )
 
   return geoms, margin, gap, condim, friction, solref, solreffriction, solimp
 
@@ -814,39 +822,41 @@ def capsule_capsule_wrapper(
     cap2_axis,
     cap2.size[0],  # radius2
     cap2.size[1],  # half_length2
+    margin,
   )
 
-  write_contact(
-    naconmax_in,
-    0,
-    dist,
-    pos,
-    make_frame(normal),
-    margin,
-    gap,
-    condim,
-    friction,
-    solref,
-    solreffriction,
-    solimp,
-    geoms,
-    pairid,
-    worldid,
-    contact_dist_out,
-    contact_pos_out,
-    contact_frame_out,
-    contact_includemargin_out,
-    contact_friction_out,
-    contact_solref_out,
-    contact_solreffriction_out,
-    contact_solimp_out,
-    contact_dim_out,
-    contact_geom_out,
-    contact_worldid_out,
-    contact_type_out,
-    contact_geomcollisionid_out,
-    nacon_out,
-  )
+  for i in range(2):
+    write_contact(
+      naconmax_in,
+      i,
+      dist[i],
+      wp.vec3(pos[i, 0], pos[i, 1], pos[i, 2]),
+      make_frame(wp.vec3(normal[i, 0], normal[i, 1], normal[i, 2])),
+      margin,
+      gap,
+      condim,
+      friction,
+      solref,
+      solreffriction,
+      solimp,
+      geoms,
+      pairid,
+      worldid,
+      contact_dist_out,
+      contact_pos_out,
+      contact_frame_out,
+      contact_includemargin_out,
+      contact_friction_out,
+      contact_solref_out,
+      contact_solreffriction_out,
+      contact_solimp_out,
+      contact_dim_out,
+      contact_geom_out,
+      contact_worldid_out,
+      contact_type_out,
+      contact_geomcollisionid_out,
+      nacon_out,
+    )
 
 
 @wp.func
@@ -1035,7 +1045,7 @@ def plane_box_wrapper(
   dist, pos, normal = plane_box(plane.normal, plane.pos, box.pos, box.rot, box.size)
   frame = make_frame(normal)
 
-  for i in range(4):
+  for i in range(8):
     write_contact(
       naconmax_in,
       i,
@@ -1562,16 +1572,9 @@ assert _check_primitive_collisions(), "_PRIMITIVE_COLLISIONS is in invalid order
 
 
 @cache_kernel
-def _create_narrowphase_kernel(primitive_collisions_types, primitive_collisions_func):
-  # AD: no unique here:
-  # * we expect this generator to be called only once per model, so no repeated compilation
-  # * module="unique" is generating problems because it uses the function name as the key
-  #   that in turn will cause multiple kernels to be generated with the same name
-  #   this is mostly problematic in cases like the UTs where we don't clear the kernel cache
-  #   between different tests.
-
-  @nested_kernel(enable_backward=False)
-  def _primitive_narrowphase(
+def _primitive_narrowphase(primitive_collisions_types, primitive_collisions_func):
+  @nested_kernel(module="unique", enable_backward=False)
+  def primitive_narrowphase(
     # Model:
     geom_type: wp.array(dtype=int),
     geom_condim: wp.array(dtype=int),
@@ -1719,20 +1722,11 @@ def _create_narrowphase_kernel(primitive_collisions_types, primitive_collisions_
           nacon_out,
         )
 
-  return _primitive_narrowphase
+  return primitive_narrowphase
 
 
-def _primitive_narrowphase_builder(m: Model):
-  _primitive_collisions_types = []
-  _primitive_collisions_func = []
-
-  for types, func in _PRIMITIVE_COLLISIONS.items():
-    idx = upper_trid_index(len(GeomType), types[0].value, types[1].value)
-    if m.geom_pair_type_count[idx] and types not in _primitive_collisions_types:
-      _primitive_collisions_types.append(types)
-      _primitive_collisions_func.append(func)
-
-  return _create_narrowphase_kernel(_primitive_collisions_types, _primitive_collisions_func)
+_PRIMITIVE_COLLISION_TYPES = []
+_PRIMITIVE_COLLISION_FUNC = []
 
 
 @event_scope
@@ -1751,10 +1745,17 @@ def primitive_narrowphase(m: Model, d: Data):
   the specific primitive collision types present in the model, avoiding
   unnecessary checks for non-existent collision pairs.
   """
-  # we need to figure out how to keep the overhead of this small - not launching anything
+  # TODO(team): keep the overhead of this small - not launching anything
   # for pair types without collisions, as well as updating the launch dimensions.
+
+  for types, func in _PRIMITIVE_COLLISIONS.items():
+    idx = upper_trid_index(len(GeomType), types[0].value, types[1].value)
+    if m.geom_pair_type_count[idx] and types not in _PRIMITIVE_COLLISION_TYPES:
+      _PRIMITIVE_COLLISION_TYPES.append(types)
+      _PRIMITIVE_COLLISION_FUNC.append(func)
+
   wp.launch(
-    _primitive_narrowphase_builder(m),
+    _primitive_narrowphase(_PRIMITIVE_COLLISION_TYPES, _PRIMITIVE_COLLISION_FUNC),
     dim=d.naconmax,
     inputs=[
       m.geom_type,

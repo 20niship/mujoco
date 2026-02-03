@@ -572,10 +572,18 @@ struct MjcPhysicsTokensType {
   ///
   /// MjcPhysicsTendon
   const TfToken mjcPathDivisors;
+  /// \brief "mjc:path:indices"
+  ///
+  /// MjcPhysicsTendon
+  const TfToken mjcPathIndices;
   /// \brief "mjc:path:segments"
   ///
   /// MjcPhysicsTendon
   const TfToken mjcPathSegments;
+  /// \brief "mjc:polycoef"
+  ///
+  /// MjcPhysicsEqualityJointAPI
+  const TfToken mjcPolycoef;
   /// \brief "mjc:priority"
   ///
   /// MjcPhysicsCollisionAPI
@@ -630,7 +638,7 @@ struct MjcPhysicsTokensType {
   const TfToken mjcSliderSite;
   /// \brief "mjc:solimp"
   ///
-  /// MjcPhysicsCollisionAPI
+  /// MjcPhysicsCollisionAPI, MjcPhysicsEqualityAPI
   const TfToken mjcSolimp;
   /// \brief "mjc:solimpfriction"
   ///
@@ -646,7 +654,7 @@ struct MjcPhysicsTokensType {
   const TfToken mjcSolmix;
   /// \brief "mjc:solref"
   ///
-  /// MjcPhysicsCollisionAPI
+  /// MjcPhysicsCollisionAPI, MjcPhysicsEqualityAPI
   const TfToken mjcSolref;
   /// \brief "mjc:solreffriction"
   ///
@@ -674,8 +682,12 @@ struct MjcPhysicsTokensType {
   const TfToken mjcStiffness;
   /// \brief "mjc:target"
   ///
-  /// MjcPhysicsActuator
+  /// MjcPhysicsActuator, MjcPhysicsEqualityAPI
   const TfToken mjcTarget;
+  /// \brief "mjc:torqueScale"
+  ///
+  /// MjcPhysicsEqualityWeldAPI
+  const TfToken mjcTorqueScale;
   /// \brief "mjc:torsionalfriction"
   ///
   /// MjcPhysicsMaterialAPI
@@ -760,6 +772,18 @@ struct MjcPhysicsTokensType {
   ///
   /// Schema identifier and family for MjcPhysicsCollisionAPI
   const TfToken MjcCollisionAPI;
+  /// \brief "MjcEqualityAPI"
+  ///
+  /// Schema identifier and family for MjcPhysicsEqualityAPI
+  const TfToken MjcEqualityAPI;
+  /// \brief "MjcEqualityJointAPI"
+  ///
+  /// Schema identifier and family for MjcPhysicsEqualityJointAPI
+  const TfToken MjcEqualityJointAPI;
+  /// \brief "MjcEqualityWeldAPI"
+  ///
+  /// Schema identifier and family for MjcPhysicsEqualityWeldAPI
+  const TfToken MjcEqualityWeldAPI;
   /// \brief "MjcImageableAPI"
   ///
   /// Schema identifier and family for MjcPhysicsImageableAPI
