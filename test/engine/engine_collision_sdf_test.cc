@@ -32,6 +32,55 @@ namespace {
 using ::testing::NotNull;
 using SdfTest = MujocoTest;
 
+// Trilinear coefficients store distances in meters; derivatives with respect
+// to unit voxel coordinates must include the inverse physical voxel width.
+TEST_F(SdfTest, MeshGradientMatchesPhysicalFiniteDifference) {
+  constexpr char xml[] = R"(
+  <mujoco>
+    <asset>
+      <mesh name="box" inertia="exact"
+        vertex="-.01 -.02 -.04 .01 -.02 -.04 .01 .02 -.04 -.01 .02 -.04
+                -.01 -.02 .04 .01 -.02 .04 .01 .02 .04 -.01 .02 .04"
+        face="3 7 6 3 6 2 0 1 5 0 5 4 0 3 2 0 2 1
+              4 5 6 4 6 7 0 4 7 0 7 3 1 2 6 1 6 5"/>
+    </asset>
+    <worldbody><body><geom type="sdf" mesh="box"/></body></worldbody>
+  </mujoco>)";
+  char error[1024];
+  MjModelPtr model = LoadModelFromString(xml, error, sizeof(error));
+  ASSERT_THAT(model.get(), NotNull()) << error;
+  MjDataPtr data = MakeData(model);
+  int id = 0;
+  const mjpPlugin* plugin = nullptr;
+  mjtGeom type = mjGEOM_SDF;
+  mjSDF sdf{};
+  sdf.id = &id;
+  sdf.plugin = &plugin;
+  sdf.type = mjSDFTYPE_SINGLE;
+  sdf.geomtype = &type;
+  ASSERT_GE(model->mesh_octadr[0], 0);
+  const mjtNum* box = model->oct_aabb + 6 * model->mesh_octadr[0];
+  for (int face_axis = 0; face_axis < 3; ++face_axis) {
+    mjtNum point[3], gradient[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      point[axis] =
+          box[axis] + (axis == face_axis ? .873 : .123) * box[3 + axis];
+    }
+    mjc_gradient(model.get(), data.get(), &sdf, gradient, point);
+    for (int axis = 0; axis < 3; ++axis) {
+      mjtNum plus[3], minus[3];
+      mju_copy3(plus, point);
+      mju_copy3(minus, point);
+      plus[axis] += 1e-7;
+      minus[axis] -= 1e-7;
+      mjtNum difference = (mjc_distance(model.get(), data.get(), &sdf, plus) -
+                           mjc_distance(model.get(), data.get(), &sdf, minus)) /
+                          2e-7;
+      EXPECT_NEAR(gradient[axis], difference, MjTol(1e-6, 1e-2));
+    }
+  }
+}
+
 static constexpr int kpoints = 6;
 static constexpr int kgeoms = 5;
 static constexpr char kSdfModel[] = R"(
