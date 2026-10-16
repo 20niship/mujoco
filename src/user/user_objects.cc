@@ -824,28 +824,55 @@ double querySignedDistance(const mjtNum* bvh,
                           best_v);
   double dist = std::sqrt(best_dist_sq);
 
-  double sign = 1.0;
-  if (best_face >= 0) {
-    const double* v0 = vert + face[best_face * 3 + 0] * 3;
-    const double* v1 = vert + face[best_face * 3 + 1] * 3;
-    const double* v2 = vert + face[best_face * 3 + 2] * 3;
-
-    double e1[3]     = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
-    double e2[3]     = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
-    double normal[3] = {e1[1] * e2[2] - e1[2] * e2[1],
-                        e1[2] * e2[0] - e1[0] * e2[2],
-                        e1[0] * e2[1] - e1[1] * e2[0]};
-
-    double closest[3] = {v0[0] + best_u * (v1[0] - v0[0]) + best_v * (v2[0] - v0[0]),
-                         v0[1] + best_u * (v1[1] - v0[1]) + best_v * (v2[1] - v0[1]),
-                         v0[2] + best_u * (v1[2] - v0[2]) + best_v * (v2[2] - v0[2])};
-
-    double u[3]       = {point[0] - closest[0], point[1] - closest[1], point[2] - closest[2]};
-    double dot        = u[0] * normal[0] + u[1] * normal[1] + u[2] * normal[2];
-    double normal_len = mjuu_normvec(normal, 3);
-    double eps        = 1e-12 * normal_len * dist;
-    sign              = (dot > eps) ? 1.0 : -1.0;
+  // A single closest face normal does not classify points at mesh edges.
+  // In particular, a point outside a coplanar cap can have zero dot product
+  // and be incorrectly marked inside. Classify the closed mesh by ray parity.
+  // An oblique ray avoids the axis-aligned caps common in CAD meshes.
+  const double     direction[3] = {1.0, 0.3713906763541037, 0.6947465906068658};
+  std::vector<int> stack        = {0};
+  int              crossings    = 0;
+  while (!stack.empty()) {
+    int node = stack.back();
+    stack.pop_back();
+    const mjtNum* box  = bvh + 6 * node;
+    double        tmin = 0.0, tmax = 1e20;
+    for (int axis = 0; axis < 3; ++axis) {
+      double a = (box[axis] - box[axis + 3] - point[axis]) / direction[axis];
+      double b = (box[axis] + box[axis + 3] - point[axis]) / direction[axis];
+      tmin     = std::max(tmin, a);
+      tmax     = std::min(tmax, b);
+    }
+    if (tmax < tmin) continue;
+    int left = child[2 * node], right = child[2 * node + 1];
+    if (left >= 0 || right >= 0) {
+      if (left >= 0) stack.push_back(left);
+      if (right >= 0) stack.push_back(right);
+      continue;
+    }
+    int fi = nodeid[node];
+    if (fi < 0) continue;
+    const double* a = vert + 3 * face[3 * fi];
+    const double* b = vert + 3 * face[3 * fi + 1];
+    const double* c = vert + 3 * face[3 * fi + 2];
+    double        e1[3], e2[3], h[3], q[3], delta[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      e1[axis]    = b[axis] - a[axis];
+      e2[axis]    = c[axis] - a[axis];
+      delta[axis] = point[axis] - a[axis];
+    }
+    mjuu_crossvec(h, direction, e2);
+    double determinant = mjuu_dot3(e1, h);
+    if (std::abs(determinant) < 1e-14 * std::sqrt(mjuu_dot3(e1, e1) * mjuu_dot3(e2, e2))) continue;
+    double inv = 1.0 / determinant;
+    double u   = inv * mjuu_dot3(delta, h);
+    if (u < 0.0 || u > 1.0) continue;
+    mjuu_crossvec(q, delta, e1);
+    double v = inv * mjuu_dot3(direction, q);
+    if (v < 0.0 || u + v > 1.0) continue;
+    double t = inv * mjuu_dot3(e2, q);
+    if (t > 1e-12) ++crossings;
   }
+  double sign = crossings % 2 ? -1.0 : 1.0;
 
   return sign * dist;
 }

@@ -435,8 +435,9 @@ void mjCMesh::CacheMesh(mjCCache* cache, const mjResource* resource) {
   mjCMesh* mesh = new mjCMesh();
 
   // mesh properties
-  mesh->maxhullvert_ = maxhullvert_;
-  mesh->inertia      = inertia;
+  mesh->maxhullvert_         = maxhullvert_;
+  mesh->inertia              = inertia;
+  mesh->spec.octree_maxdepth = spec.octree_maxdepth;
   std::copy(scale, scale + 3, mesh->scale);
 
   // mesh processed data
@@ -978,6 +979,11 @@ bool mjCMesh::LoadCachedMesh(mjCCache* cache, const mjResource* resource) {
 
     // check if need hull
     if (needhull_ && !mesh->szgraph_) { return false; }
+
+    // A cached octree must match the requested SDF resolution.
+    if (needsdf && mesh->octree_.NumNodes() && spec.octree_maxdepth != mesh->spec.octree_maxdepth) {
+      return false;
+    }
 
     processed_    = mesh->processed_;
     vert_         = mesh->vert_;

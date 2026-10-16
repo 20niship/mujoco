@@ -27,6 +27,7 @@
 #include <mujoco/mjtype.h>
 #include <mujoco/mujoco.h>
 #include "test/fixture.h"
+#include "src/engine/engine_collision_sdf.h"
 
 namespace mujoco {
 namespace {
@@ -39,6 +40,45 @@ using ::testing::HasSubstr;
 using ::testing::IsNull;
 using ::testing::NotNull;
 using ::testing::Pointwise;
+
+// Points beyond an edge can be coplanar with the closest triangle. The
+// normal of that triangle alone must not mark these exterior points inside.
+using SignedDistanceTest = MujocoTest;
+
+TEST_F(SignedDistanceTest, CoplanarExteriorEdges) {
+  constexpr char xml[] = R"(
+  <mujoco>
+    <asset>
+      <mesh name="box" inertia="exact"
+        vertex="-1 -1 -1 1 -1 -1 1 1 -1 -1 1 -1
+                -1 -1 1 1 -1 1 1 1 1 -1 1 1"
+        face="3 7 6 3 6 2 0 1 5 0 5 4 0 3 2 0 2 1
+              4 5 6 4 6 7 0 4 7 0 7 3 1 2 6 1 6 5"/>
+    </asset>
+    <worldbody><body><geom type="sdf" mesh="box"/></body></worldbody>
+  </mujoco>)";
+  char error[1024];
+  MjModelPtr model = LoadModelFromString(xml, error, sizeof(error));
+  ASSERT_THAT(model.get(), NotNull()) << error;
+  MjDataPtr data = MakeData(model);
+  int id = 0;
+  const mjpPlugin* plugin = nullptr;
+  mjtGeom type = mjGEOM_SDF;
+  mjSDF sdf{};
+  sdf.id = &id;
+  sdf.plugin = &plugin;
+  sdf.type = mjSDFTYPE_SINGLE;
+  sdf.geomtype = &type;
+  const mjtNum exterior[][3] = {{1.02, 1, 0},  {1, 1.02, 0}, {1.02, -1, 0},
+                                {-1, 1.02, 0}, {0, 1, 1.02}, {0, 1.02, 1}};
+  for (const auto& point : exterior) {
+    EXPECT_GT(mjc_distance(model.get(), data.get(), &sdf, point), 0);
+  }
+  const mjtNum inside[][3] = {{.2, .3, .4}, {-.2, -.3, -.4}};
+  for (const auto& point : inside) {
+    EXPECT_LT(mjc_distance(model.get(), data.get(), &sdf, point), 0);
+  }
+}
 
 // -------------------- test OS filesystem fallback ----------------------------
 

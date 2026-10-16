@@ -30,6 +30,9 @@ mujoco_test(engine_collision_convex_test)
 
 mujoco_test(engine_collision_driver_test)
 
+mujoco_test(engine_collision_sdf_test
+  PROPERTIES ENVIRONMENT "MUJOCO_PLUGIN_DIR=$<TARGET_FILE_DIR:sdf_plugin>")
+
 mujoco_test(engine_collision_gjk_test ADDITIONAL_LINK_LIBRARIES ccd)
 
 mujoco_test(engine_core_constraint_test)
