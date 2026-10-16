@@ -27,6 +27,21 @@
 #include "engine/engine_util_misc.h"
 #include "engine/engine_util_spatial.h"
 
+#ifdef _MSC_VER
+#define mjTHREADLOCAL __declspec(thread)
+#else
+#define mjTHREADLOCAL _Thread_local
+#endif
+
+// メッシュごとに直前の findOct が根から葉までたどった節点（findOct のヒント）。スレッドごとに持つ
+#define mjNOCTHINT 256
+#define mjOCTPATH 16
+typedef struct {
+  int n;                   // 覚えている段数
+  int node[mjOCTPATH];     // node[k] = 深さ k の節点
+} mjOctPath;
+static mjTHREADLOCAL mjOctPath oct_hint[mjNOCTHINT];
+
 
 
 
@@ -66,11 +81,28 @@ mjtNum boxProjection(mjtNum point[3], const mjtNum box[6]) {
 // populate the weights of the interpolated function (if w is not null) and of
 // its gradient (if dw is not null) using the vertices as degrees of freedom for
 // trilinear interpolation.
+// 直前にたどった節点のうち、点を内側（境界から箱の 1e-6 倍以上離れる）に含むいちばん深いものから
+// たどり始める。節点の箱は親を半分に割ったもので入れ子なので、根からたどってもその節点を通り、
+// そこから先は同じ判定・同じ式なので、着く葉も重みもビット単位で変わらない。
 static int findOct(mjtNum w[8], mjtNum dw[8][3], const mjtNum* oct_aabb,
-                   const int* oct_child, const mjtNum p[3]) {
+                   const int* oct_child, const mjtNum p[3], int noct, mjOctPath* path) {
   int stack = 0;
   mjtNum eps = 1e-8;
   int niter = 100;
+
+  int level = path->n - 1;
+  for (; level > 0; level--) {
+    int h = path->node[level];
+    if (h >= noct) continue;
+    const mjtNum* c = oct_aabb + 6*h;
+    if (mju_abs(p[0] - c[0]) < c[3] * (1 - 1e-6) &&
+        mju_abs(p[1] - c[1]) < c[4] * (1 - 1e-6) &&
+        mju_abs(p[2] - c[2]) < c[5] * (1 - 1e-6)) {
+      stack = h;
+      break;
+    }
+  }
+  if (level < 0) level = 0;
 
   while (niter-- > 0) {
     int node = stack;
@@ -91,6 +123,11 @@ static int findOct(mjtNum w[8], mjtNum dw[8][3], const mjtNum* oct_aabb,
         p[1] + eps < vmin[1] || p[1] - eps > vmax[1] ||
         p[2] + eps < vmin[2] || p[2] - eps > vmax[2]) {
       continue;
+    }
+
+    if (level < mjOCTPATH) {
+      path->node[level] = node;
+      path->n = ++level;
     }
 
     mjtNum coord[3] = {(p[0] - vmin[0]) / (vmax[0] - vmin[0]),
@@ -150,7 +187,8 @@ mjtNum oct_distance(const mjModel* m, const mjtNum p[3], int meshid) {
   mjtNum sdf = 0;
   mjtNum point[3] = {p[0], p[1], p[2]};
   mjtNum boxDist = boxProjection(point, oct_aabb);
-  int node = findOct(w, NULL, oct_aabb, oct_child, point);
+  int node = findOct(w, NULL, oct_aabb, oct_child, point, m->mesh_octnum[meshid],
+                     oct_hint + meshid % mjNOCTHINT);
   for (int i = 0; i < 8; ++i) {
     sdf += w[i] * oct_coeff[8*node + i];
   }
@@ -175,7 +213,8 @@ void oct_gradient(const mjModel* m, mjtNum grad[3], const mjtNum point[3], int m
   // analytic in the interior
   if (boxProjection(p, oct_aabb) <= 0) {
     mjtNum dw[8][3];
-    int node = findOct(NULL, dw, oct_aabb, oct_child, p);
+    int node = findOct(NULL, dw, oct_aabb, oct_child, p, m->mesh_octnum[meshid],
+                       oct_hint + meshid % mjNOCTHINT);
     for (int i = 0; i < 8; ++i) {
       grad[0] += dw[i][0] * oct_coeff[8*node + i];
       grad[1] += dw[i][1] * oct_coeff[8*node + i];
@@ -413,9 +452,41 @@ static void geomGradient(mjtNum gradient[3], const mjModel* m, const mjData* d,
 
 //---------------------------- helper functions -------------------------------------------
 
+// collision 型の 2 つの距離 A（geom 0）と B（geom 1）
+static void collisionAB(mjtNum AB[2], const mjModel* m, const mjData* d, const mjSDF* s,
+                        const mjtNum x[3]) {
+  mjtNum y[3];
+  mju_mulMatVec3(y, s->relmat, x);
+  mju_addTo3(y, s->relpos);
+  AB[0] = geomDistance(m, d, s->plugin[0], s->id[0], x, s->geomtype[0]);
+  AB[1] = geomDistance(m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
+}
+
+
+static mjtNum collisionDistance(const mjtNum AB[2]) {
+  return AB[0] + AB[1] + mju_abs(mju_max(AB[0], AB[1]));
+}
+
+
+// collision 型の勾配（A, B は x で計算済みのもの）
+static void collisionGradient(const mjModel* m, const mjData* d, const mjSDF* s,
+                              mjtNum gradient[3], const mjtNum x[3], const mjtNum AB[2]) {
+  mjtNum y[3], grad1[3], grad2[3];
+  mjtNum A = AB[0], B = AB[1];
+  mju_mulMatVec3(y, s->relmat, x);
+  mju_addTo3(y, s->relpos);
+  geomGradient(grad1, m, d, s->plugin[0], s->id[0], x, s->geomtype[0]);
+  geomGradient(grad2, m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
+  mju_mulMatTVec3(grad2, s->relmat, grad2);
+  gradient[0] = grad1[0] + grad2[0];
+  gradient[1] = grad1[1] + grad2[1];
+  gradient[2] = grad1[2] + grad2[2];
+  mju_addToScl3(gradient, A > B ? grad1 : grad2, mju_max(A, B) > 0 ? 1 : -1);
+}
+
 // signed distance function
 mjtNum mjc_distance(const mjModel* m, const mjData* d, const mjSDF* s, const mjtNum x[3]) {
-  mjtNum y[3];
+  mjtNum y[3], AB[2];
 
   switch (s->type) {
   case mjSDFTYPE_SINGLE:
@@ -434,11 +505,8 @@ mjtNum mjc_distance(const mjModel* m, const mjData* d, const mjSDF* s, const mjt
            geomDistance(m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
 
   case mjSDFTYPE_COLLISION:
-    mju_mulMatVec3(y, s->relmat, x);
-    mju_addTo3(y, s->relpos);
-    mjtNum A = geomDistance(m, d, s->plugin[0], s->id[0], x, s->geomtype[0]);
-    mjtNum B = geomDistance(m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
-    return A + B + mju_abs(mju_max(A, B));
+    collisionAB(AB, m, d, s, x);
+    return collisionDistance(AB);
 
   default:
     mjERROR("SDF type not available");
@@ -452,7 +520,7 @@ void mjc_gradient(const mjModel* m, const mjData* d, const mjSDF* s,
                   mjtNum gradient[3], const mjtNum x[3]) {
   mjtNum y[3];
   const mjtNum* point[2] = {x, y};
-  mjtNum grad1[3], grad2[3];
+  mjtNum grad1[3], grad2[3], AB[2];
 
   switch (s->type) {
   case mjSDFTYPE_INTERSECTION:
@@ -479,17 +547,8 @@ void mjc_gradient(const mjModel* m, const mjData* d, const mjSDF* s,
     break;
 
   case mjSDFTYPE_COLLISION:
-    mju_mulMatVec3(y, s->relmat, x);
-    mju_addTo3(y, s->relpos);
-    mjtNum A = geomDistance(m, d, s->plugin[0], s->id[0], x, s->geomtype[0]);
-    mjtNum B = geomDistance(m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
-    geomGradient(grad1, m, d, s->plugin[0], s->id[0], x, s->geomtype[0]);
-    geomGradient(grad2, m, d, s->plugin[1], s->id[1], y, s->geomtype[1]);
-    mju_mulMatTVec3(grad2, s->relmat, grad2);
-    gradient[0] = grad1[0] + grad2[0];
-    gradient[1] = grad1[1] + grad2[1];
-    gradient[2] = grad1[2] + grad2[2];
-    mju_addToScl3(gradient, A > B ? grad1 : grad2, mju_max(A, B) > 0 ? 1 : -1);
+    collisionAB(AB, m, d, s, x);
+    collisionGradient(m, d, s, gradient, x, AB);
     break;
 
   case mjSDFTYPE_SINGLE:
@@ -618,6 +677,8 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
   const mjtNum rho = .5;     // reduction factor for the gradient scaling (alpha)
   const mjtNum amin = 1e-10;  // resolve sub-millimeter CAD contacts in meter units
   mjtNum dist = mjMAXVAL;
+  int collision = s->type == mjSDFTYPE_COLLISION;
+  mjtNum AB[2];  // collision 型では今の x の A, B を持ち回し、勾配と dist0 で再計算しない
 
   for (int step=0; step < niter; step++) {
     mjtNum grad[3];
@@ -625,7 +686,12 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
                         // the units of the gradient depend on s->type
 
     // evaluate gradient
-    mjc_gradient(m, d, s, grad, x);
+    if (collision) {
+      if (!step) collisionAB(AB, m, d, s, x);
+      collisionGradient(m, d, s, grad, x, AB);
+    } else {
+      mjc_gradient(m, d, s, grad, x);
+    }
 
     // sanity check
     if (isnan(grad[0]) || grad[0] > mjMAXVAL || grad[0] < -mjMAXVAL ||
@@ -637,8 +703,8 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
     // save current solution
     mjtNum x0[] = {x[0], x[1], x[2]};
 
-    // evaluate distance
-    mjtNum dist0 = mjc_distance(m, d, s, x0);
+    // evaluate distance（2 反復目以降は直前の線探索で同じ点の dist を計算済み）
+    mjtNum dist0 = step ? dist : collision ? collisionDistance(AB) : mjc_distance(m, d, s, x0);
     // Scale the initial step to the local distance instead of starting with a
     // two-meter displacement for centimeter-sized CAD. The corrected analytic
     // gradient is in physical coordinates, matching exterior finite differences.
@@ -650,7 +716,12 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
       alpha *= rho;
       wolfe *= rho;
       mju_addScl3(x, x0, grad, -alpha);
-      dist = mjc_distance(m, d, s, x);
+      if (collision) {
+        collisionAB(AB, m, d, s, x);
+        dist = collisionDistance(AB);
+      } else {
+        dist = mjc_distance(m, d, s, x);
+      }
     } while (alpha > amin && dist - dist0 > wolfe);
 
     // if no improvement, early stop
