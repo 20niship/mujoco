@@ -644,7 +644,7 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
                            const mjData* d, int niter) {
   const mjtNum c = .1;       // reduction factor for the target decrease in the objective function
   const mjtNum rho = .5;     // reduction factor for the gradient scaling (alpha)
-  const mjtNum amin = 1e-4;  // minimum value for alpha
+  const mjtNum amin = 1e-10;  // resolve sub-millimeter CAD contacts in meter units
   mjtNum dist = mjMAXVAL;
 
   for (int step=0; step < niter; step++) {
@@ -667,6 +667,10 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
 
     // evaluate distance
     mjtNum dist0 = mjc_distance(m, d, s, x0);
+    // Scale the initial step to the local distance instead of starting with a
+    // two-meter displacement for centimeter-sized CAD. The corrected analytic
+    // gradient is in physical coordinates, matching exterior finite differences.
+    alpha = 2 * mju_max(mju_abs(dist0), 1e-6) / mju_max(mju_dot3(grad, grad), .1);
     mjtNum wolfe = - c * alpha * mju_dot3(grad, grad);
 
     // backtracking line search
@@ -681,6 +685,9 @@ static mjtNum stepGradient(mjtNum x[3], const mjModel* m, const mjSDF* s,
     if (dist0 < dist) {
       mju_copy3(x, x0);
       return dist0;
+    }
+    if (dist0 - dist < 1e-10) {
+      return dist;
     }
   }
 
